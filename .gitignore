@@ -1,0 +1,34 @@
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Local scratch work
+scratch/
+
+# Editor and IDE state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary and backup files
+*.tmp
+*.bak
+
+# Julia coverage and allocation reports
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+*.jl.*.mem
+/coverage/
+/lcov.info
+
+# Generated documentation (Documenter.jl)
+/docs/build/
+/docs/site/
+
+# Local Julia dependency resolution (library repository)
+/Manifest.toml

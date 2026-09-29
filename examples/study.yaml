@@ -1,0 +1,34 @@
+# Paths are relative to this file. Omit template to use the bundled template.
+project: RFEBHM
+template: ../templates/multiwormqmc/config.yaml
+output_dir: ../studies/my_study
+
+overrides:
+  lattice.extent: [32]
+  run.blocks: 100
+  run.samples_per_block: 10000
+
+sweep:
+  system.beta: [2.0, 4.0, 8.0]
+  model.onsite.mu:
+    - [1.0, 1.0]
+    - [2.0, 2.0]
+
+# Optional: repeat each parameter combination with fresh sampling seeds.
+# replicas: 10
+# randomize_seeds:
+#   - run.seed
+#   - worldlines.init_seed
+#   - model.disorder.seed
+
+# Optional with replicas: reproduce generated seeds.
+# seed_generation_seed: 12345
+# Optional: record the simulation checkout version and Git revision.
+# multiwormqmc_path: /path/to/multiwormqmc.jl
+
+# Optional: customize the jobfile generated with every study.
+# jobs:
+#   command: [multiwormqmc]
+#   run_dir: /cluster/path/to/study
+#   mode: direct
+# Use mode: scratch and optionally scratch_root: /scratch for node-local execution.
