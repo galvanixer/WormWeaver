@@ -1,7 +1,7 @@
-# Paths are relative to this file. Omit template to use the bundled template.
+# Copy this file and set output_dir before generating your study.
+# Uses the bundled simulation template; optional relative paths resolve from this file.
 project: RFEBHM
-template: ../templates/multiwormqmc/config.yaml
-output_dir: ../studies/my_study
+output_dir: /path/to/my_study
 
 overrides:
   lattice.extent: [32]

@@ -69,6 +69,8 @@ Throughout this workflow, results should remain traceable to the simulation inpu
 
 WormWeaver is in early development. Study folder generation is available; the broader job execution, aggregation, and analysis workflow remains under development.
 
+An editable [Unistra HPC study template](templates/studies/unistra-hpc.yaml) is available for scratch-mode runs. For installation and batch execution on Unistra, see [Running multiwormqmc.jl on Unistra HPC](docs/unistra-hpc.md).
+
 ## Generate a study
 
 From the WormWeaver directory, install dependencies and start Julia:
@@ -78,19 +80,18 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=.
 ```
 
-Use the provided [example study](examples/study.yaml):
+Copy the [general study template](templates/studies/study.yaml) to your working directory and set `output_dir` before generating:
 
 ```julia
 using WormWeaver
-generate_study("examples/study.yaml")
+generate_study("/path/to/study.yaml")
 ```
 
 The study file specifies constant overrides and a Cartesian parameter sweep:
 
 ```yaml
 project: RFEBHM
-template: ../templates/multiwormqmc/config.yaml
-output_dir: ../studies/my_study
+output_dir: /path/to/my_study
 overrides:
   lattice.extent: [32]
   run.blocks: 100
@@ -107,7 +108,7 @@ Paths are relative to the study file. Omit `template` to use WormWeaver's bundle
 This example generates six simulations:
 
 ```text
-studies/my_study/
+/path/to/my_study/
 ├── study.yaml
 ├── template.yaml
 ├── provenance.yaml
@@ -197,7 +198,7 @@ Two account-specific templates are included, based on the HSCAnalysis launcher:
 - `grant_g2026a136c.slurm`: `#SBATCH -p grant -A g2026a136c`
 - `grantgpu_g2026a136g.slurm`: `#SBATCH -p grantgpu -A g2026a136g`
 
-Both invoke `hpc_multilauncher jobfile` and retain the original node, memory, and wall-time settings. The GPU-partition script does not add a GPU resource request or change the simulation executable. Choose the script appropriate to your allocation and submit from the generated study directory, for example `sbatch grant_g2026a136c.slurm`. The cluster must provide `hpc_multilauncher` and the configured command. Adding or removing `.slurm` files in `templates/slurm/` controls the scripts copied into future studies. WormWeaver does not submit jobs. Regenerating with `overwrite=true` replaces script edits with the bundled templates.
+Both load `gcc/15.2.0` before invoking `hpc_multilauncher jobfile` and retain the original node, memory, and wall-time settings. The GPU-partition script does not add a GPU resource request or change the simulation executable. Choose the script appropriate to your allocation and submit from the generated study directory, for example `sbatch grant_g2026a136c.slurm`. The cluster must provide `hpc_multilauncher` and the configured command. Adding or removing `.slurm` files in `templates/slurm/` controls the scripts copied into future studies. WormWeaver does not submit jobs. Regenerating with `overwrite=true` replaces script edits with the bundled templates.
 
 ### Node-local scratch execution
 
@@ -237,7 +238,7 @@ Every study includes `provenance.yaml` recording its study ID, Julia version, se
 
 `multiwormqmc_path` is resolved relative to the study definition and must point to a MultiwormQMC package directory. If omitted, WormWeaver discovers MultiwormQMC from the Julia environment without loading it. If unavailable, the provenance marks it unavailable with null version/revision fields. Git commits are null for packages without their own repository or without a commit; dirty states include untracked files. No files are committed automatically.
 
-Unknown fields, incompatible top-level value types, empty sweep lists, and overlapping override/sweep paths are rejected. Existing output directories are rejected by default. Use `generate_study("examples/study.yaml"; overwrite=true)` to replace the entire output directory, including old simulation outputs and any extra files. Replacement generates a fresh study ID. Files and symlinks are not accepted as replacement destinations. All configurations are prepared before output is written, and files are staged before publishing the study directory. During replacement, the old directory is retained until publication succeeds and restored if publication fails. Generated configs use compact formatting: short scalar arrays are inline, small records in lists use flow style, and larger sections remain indented blocks. Strings are quoted to preserve their meaning. Values are preserved, but original formatting and comments are not; the template snapshot retains both.
+Unknown fields, incompatible top-level value types, empty sweep lists, and overlapping override/sweep paths are rejected. Existing output directories are rejected by default. Use `generate_study("/path/to/study.yaml"; overwrite=true)` to replace the entire output directory, including old simulation outputs and any extra files. Replacement generates a fresh study ID. Files and symlinks are not accepted as replacement destinations. All configurations are prepared before output is written, and files are staged before publishing the study directory. During replacement, the old directory is retained until publication succeeds and restored if publication fails. Generated configs use compact formatting: short scalar arrays are inline, small records in lists use flow style, and larger sections remain indented blocks. Strings are quoted to preserve their meaning. Values are preserved, but original formatting and comments are not; the template snapshot retains both.
 
 Validation here checks study structure and field types, not the full physical constraints enforced by multiwormqmc.jl. For additional checks, supply `generate_study(path; validate_config=my_validator)`, where `my_validator(config)` receives each generated configuration dictionary and throws if it is invalid. All callbacks run before writing output.
 

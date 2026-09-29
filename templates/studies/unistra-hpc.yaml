@@ -1,0 +1,48 @@
+# Copy to ~/Studies/my_study.yaml on Unistra and edit before generating.
+# Replace account-specific paths if needed. Use absolute paths without spaces
+# for the original-style scratch jobfile. YAML paths do not expand ~ or $HOME.
+project: LRBHQM
+output_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test
+
+# This checkout must be accessible on the machine generating the study.
+multiwormqmc_path: /home2020/home/isis/tgupta/Code/multiwormqmc.jl
+
+# Omit template to use WormWeaver's bundled simulation config.
+# For a custom config stored beside this study YAML, uncomment:
+# template: ./config.yaml
+
+# Example sampling settings; adjust for your simulation study.
+overrides:
+  run.blocks: 100
+  run.samples_per_block: 10000
+  run.burnin_blocks: 10
+
+# Three beta values x ten replicas = 30 simulation folders.
+# Remove sweep to generate ten replicas of a single parameter combination.
+sweep:
+  system.beta: [2.0, 4.0, 8.0]
+
+replicas: 10
+seed_generation_seed: 12345
+randomize_seeds:
+  - run.seed
+  - worldlines.init_seed
+  # Uncomment to vary disorder realizations too:
+  # - model.disorder.seed
+
+jobs:
+  mode: scratch
+  command:
+    - julia
+    - /home2020/home/isis/tgupta/Code/multiwormqmc.jl/bin/multiwormqmc.jl
+  # Must match the study's location when the batch job executes.
+  run_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test
+  scratch_root: /scratch
+
+# Generated studies include both account scripts, loading gcc/15.2.0:
+#   grant_g2026a136c.slurm
+#   grantgpu_g2026a136g.slurm
+# Submit one from the generated study directory.
+# The cluster must provide /scratch/job.$SLURM_JOB_ID and hpc_multilauncher.
+# If generating locally, change output_dir and multiwormqmc_path to local paths,
+# keep jobs.command and jobs.run_dir pointing to the HPC, then transfer the study.
