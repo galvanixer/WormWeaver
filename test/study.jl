@@ -13,7 +13,7 @@ import DataFrames
         YAML.write_file(template, original)
         definition = Dict{String,Any}(
             "project" => "RFEBHM",
-            "template" => "template.yaml", "output_dir" => "generated",
+            "template" => "./template.yaml", "output_dir" => "generated",
             "overrides" => Dict("run.blocks" => 100),
             "sweep" => Dict("system.beta" => [2.0, 4.0, 8.0],
                             "model.mu" => [[1.0, 1.0], [2.0, 2.0]]))
@@ -411,5 +411,36 @@ end
             end
         end
         @test isempty(read(capture, String))
+    end
+end
+
+@testset "Bundled simulation template selection" begin
+    mktempdir() do root
+        source = joinpath(root, "study.yaml")
+        local_config = Dict("system" => Dict("beta" => 123.0))
+        YAML.write_file(joinpath(root, "config_LRBHQM.yaml"), local_config)
+        for name in ("config.yaml", "config_LRBHQM.yaml")
+            YAML.write_file(source, Dict("project" => "templates", "output_dir" => name * "_output", "template" => name))
+            output = generate_study(source)
+            bundled = joinpath(@__DIR__, "..", "templates", "multiwormqmc", name)
+            @test read(joinpath(output, "template.yaml")) == read(bundled)
+            @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == YAML.load_file(bundled)
+        end
+        for (i, template) in enumerate(("./config_LRBHQM.yaml", joinpath(root, "config_LRBHQM.yaml")))
+            YAML.write_file(source, Dict("project" => "local", "output_dir" => "local$i", "template" => template))
+            output = generate_study(source)
+            @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == local_config
+        end
+        YAML.write_file(joinpath(root, "custom.yaml"), local_config)
+        YAML.write_file(source, Dict("project" => "bad", "output_dir" => "bad", "template" => "custom.yaml"))
+        err = try
+            generate_study(source)
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("config_LRBHQM.yaml", sprint(showerror, err))
+        @test occursin("./filename.yaml", sprint(showerror, err))
+        @test !ispath(joinpath(root, "bad"))
     end
 end

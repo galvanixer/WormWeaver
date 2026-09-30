@@ -19,6 +19,8 @@ output_dir: /path/to/my_study
 # Omitted: use WormWeaver's bundled templates/multiwormqmc/config.yaml.
 # Custom config beside this study file:
 # template: ./config.yaml
+# Or select a bundled template by filename (independent of this file's location):
+# template: config_LRBHQM.yaml
 
 # OPTIONAL: checkout used to record MultiwormQMC version/Git provenance.
 # Must exist on the GENERATION machine and contain MultiwormQMC's Project.toml.

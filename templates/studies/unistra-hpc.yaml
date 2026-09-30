@@ -10,6 +10,8 @@ multiwormqmc_path: /home2020/home/isis/tgupta/Code/multiwormqmc.jl
 # Omit template to use WormWeaver's bundled simulation config.
 # For a custom config stored beside this study YAML, uncomment:
 # template: ./config.yaml
+# Or select a bundled template by filename (independent of this file's location):
+# template: config_LRBHQM.yaml
 
 # Example sampling settings; adjust for your simulation study.
 overrides:

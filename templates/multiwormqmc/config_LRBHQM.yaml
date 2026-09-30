@@ -18,7 +18,7 @@ model:
     kind: power_law  # Hopping structure: nearest_neighbor, power_law etc.
     J: [1.0, 1.0]  # One hopping amplitude per species.
     alpha: [1.5, 1.5]  # Power-law decay exponent for hopping, if applicable.
-    distance_cutoff: [null, 1.01]  # Finite-range / truncated hopping cutoff.
+    distance_cutoff: [null, null]  # Finite-range / truncated hopping cutoff.
 
   onsite:
     U: [[20.0, 10.0], [10.0, 20.0]]  # Full species-species onsite interaction matrix.

@@ -124,8 +124,18 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     destination = resolve(output)
     check_destination(destination, overwrite)
     template_path = get(study, "template", DEFAULT_TEMPLATE)
-    template_path isa AbstractString || throw(ArgumentError("template must be a path"))
-    template_text = read(resolve(template_path), String)
+    template_path isa AbstractString && !isempty(strip(template_path)) ||
+        throw(ArgumentError("template must be a nonempty filename or path"))
+    if !isabspath(template_path) && !occursin('/', template_path) && !occursin('\\', template_path)
+        template_dir = dirname(DEFAULT_TEMPLATE)
+        available = sort(filter(name -> isfile(joinpath(template_dir, name)), readdir(template_dir)))
+        template_path in available || throw(ArgumentError(
+            "Unknown bundled template: $template_path; available templates: $(join(available, ", ")). Use ./filename.yaml for a local file."))
+        template_path = joinpath(template_dir, template_path)
+    else
+        template_path = resolve(template_path)
+    end
+    template_text = read(template_path, String)
     template = mapping(YAML.load(template_text), "Template")
     overrides = mapping(get(study, "overrides", Dict()), "overrides")
     sweep = mapping(get(study, "sweep", Dict()), "sweep")

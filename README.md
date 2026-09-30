@@ -113,7 +113,7 @@ sweep:
     - [2.0, 2.0]
 ```
 
-Paths are relative to the study file. Omit `template` to use WormWeaver's bundled simulation template. Dotted field names address existing keys in the template. Arrays are replaced in full: each chemical-potential pair above is one sweep value.
+Relative paths are resolved from the study file. Omit `template` to use the bundled `config.yaml`. A bare filename selects a file in `templates/multiwormqmc/`, for example `template: config_LRBHQM.yaml`. Use `template: ./config.yaml`, `../configs/config.yaml`, or an absolute path for a custom file. Bare filenames never fall back to local files; unknown names list the bundled templates. Dotted field names address existing keys in the template. Arrays are replaced in full: each chemical-potential pair above is one sweep value.
 
 This example generates six simulations:
 
