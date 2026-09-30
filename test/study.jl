@@ -383,3 +383,33 @@ end
     @test WormWeaver.Study.jobfile_text(study, "/home/user/Run/study", ["sim600"]) == expected
     @test WormWeaver.Study.scratch_jobline(command, source, "/scratch/", "sim600") == expected
 end
+
+@testset "Generation summary" begin
+    mktempdir() do root
+        source = joinpath(root, "study.yaml")
+        YAML.write_file(source, Dict("project" => "summary", "output_dir" => "generated",
+            "replicas" => 2, "sweep" => Dict("system.beta" => [2.0, 4.0, 8.0]),
+            "jobs" => Dict("mode" => "scratch", "run_dir" => "/cluster/study")))
+        capture = joinpath(root, "stdout.txt")
+        result = open(capture, "w") do io
+            redirect_stdout(io) do
+                generate_study(source)
+            end
+        end
+        text = read(capture, String)
+        @test result == joinpath(root, "generated")
+        @test occursin("Created 6 simulations: 3 parameter combinations × 2 replicas", text)
+        @test occursin("Directory: $result", text)
+        @test occursin("Job mode: scratch", text)
+        @test occursin("cd '/cluster/study'", text)
+        @test occursin("sbatch grant_g2026a136c.slurm", text)
+        @test occursin("sbatch grantgpu_g2026a136g.slurm", text)
+        @test occursin("Choose one account script. No jobs have been submitted.", text)
+        open(capture, "w") do io
+            redirect_stdout(io) do
+                @test_throws ArgumentError generate_study(source)
+            end
+        end
+        @test isempty(read(capture, String))
+    end
+end

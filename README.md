@@ -80,12 +80,22 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=.
 ```
 
-Copy the [general study template](templates/studies/study.yaml) to your working directory and set `output_dir` before generating:
+Create a commented study definition from the [general study template](templates/studies/study.yaml):
 
 ```julia
 using WormWeaver
-generate_study("/path/to/study.yaml")
+init_study("my_study.yaml")                   # General preset (default).
+# init_study("my_study.yaml"; preset="unistra-hpc.yaml") # Unistra HPC preset.
+
+# Edit my_study.yaml: set output_dir, parameters, and job settings.
+generate_study("my_study.yaml");
 ```
+
+`preset` is the filename inside `templates/studies/` and defaults to `"study.yaml"`. Adding a file there makes it available automatically. Unknown names report the available templates.
+
+`init_study` copies the template verbatim, preserving comments, and creates missing parent directories. It returns the absolute YAML path. Existing files are protected unless `overwrite=true` is supplied; directories and symlinks are rejected. It only creates the study definition, without generating simulations or submitting jobs.
+
+After successful generation, WormWeaver prints the simulation count, parameter-combination and replica counts, output directory, job mode, and submission commands for the copied Slurm scripts. It still returns the absolute study directory and does not submit jobs.
 
 The study file specifies constant overrides and a Cartesian parameter sweep:
 

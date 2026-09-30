@@ -284,6 +284,20 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     finally
         isdir(staging) && rm(staging; recursive=true)
     end
+    combinations = div(length(configs), replicas)
+    jobs = get(study, "jobs", Dict())
+    mode = get(jobs, "mode", "direct")
+    run_dir = get(jobs, "run_dir", destination)
+    println("Created $(length(configs)) simulations: $combinations parameter combinations × $replicas replicas")
+    println("Directory: $destination")
+    println("Job mode: $mode")
+    println("\nSubmit from the study directory on the execution machine:")
+    println("  cd ", shell_quote(run_dir))
+    for name in sort(readdir(destination))
+        endswith(name, ".slurm") && isfile(joinpath(destination, name)) || continue
+        println("  sbatch ", name)
+    end
+    println("Choose one account script. No jobs have been submitted.")
     destination
 end
 
