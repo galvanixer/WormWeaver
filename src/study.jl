@@ -1,5 +1,6 @@
 module Study
 
+import Dates
 import YAML
 import CSV
 import JLD2
@@ -110,7 +111,7 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     source = abspath(path)
     study_text = read(source, String)
     study = mapping(YAML.load(study_text), "Study")
-    allowed = ("project", "template", "output_dir", "overrides", "sweep", "replicas", "randomize_seeds", "seed_generation_seed", "multiwormqmc_path", "jobs")
+    allowed = ("project", "template", "output_dir", "overrides", "sweep", "replicas", "randomize_seeds", "seed_generation_seed", "multiwormqmc_path", "jobs", "append_date")
     for key in keys(study)
         key in allowed || throw(ArgumentError("Unknown study option: $key"))
     end
@@ -121,7 +122,19 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     output isa AbstractString && !isempty(strip(output)) ||
         throw(ArgumentError("output_dir must be a nonempty path"))
     resolve(p) = abspath(joinpath(dirname(source), p))
-    destination = resolve(output)
+    append_date = get(study, "append_date", true)
+    append_date isa Bool || throw(ArgumentError("append_date must be true or false"))
+    date_suffix = append_date ? "_" * string(Dates.today()) : ""
+    destination = append_date ? rstrip(normpath(resolve(output)), '/') * date_suffix : resolve(output)
+    if append_date && haskey(study, "jobs")
+        jobs = mapping(study["jobs"], "jobs")
+        if haskey(jobs, "run_dir")
+            run_dir = jobs["run_dir"]
+            run_dir isa AbstractString && isabspath(run_dir) ||
+                throw(ArgumentError("jobs.run_dir must be an absolute execution directory"))
+            jobs["run_dir"] = rstrip(normpath(run_dir), '/') * date_suffix
+        end
+    end
     check_destination(destination, overwrite)
     template_path = get(study, "template", DEFAULT_TEMPLATE)
     template_path isa AbstractString && !isempty(strip(template_path)) ||

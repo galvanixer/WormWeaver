@@ -15,6 +15,10 @@ project: RFEBHM
 # That flag replaces the entire folder, including old results; it is not a YAML key.
 output_dir: /path/to/my_study
 
+# By default, append the generation machine's local date (_YYYY-MM-DD).
+# Also suffixes an explicit jobs.run_dir. Set false to keep undated paths.
+# append_date: false
+
 # OPTIONAL: simulation config used as the baseline for every run.
 # Omitted: use WormWeaver's bundled templates/multiwormqmc/config.yaml.
 # Custom config beside this study file:

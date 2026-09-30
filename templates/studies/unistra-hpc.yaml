@@ -4,6 +4,10 @@
 project: LRBHQM
 output_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test
 
+# By default, append the generation machine's local date (_YYYY-MM-DD).
+# Also suffixes an explicit jobs.run_dir. Set false to keep undated paths.
+# append_date: false
+
 # This checkout must be accessible on the machine generating the study.
 multiwormqmc_path: /home2020/home/isis/tgupta/Code/multiwormqmc.jl
 

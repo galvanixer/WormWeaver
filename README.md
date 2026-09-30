@@ -135,6 +135,8 @@ This example generates six simulations:
 └── sim6/config.yaml
 ```
 
+By default, `append_date: true` appends the generation machine's local date to the output folder, for example `my_study_2026-09-30`. Set `append_date: false` to keep the folder name unchanged. An explicit `jobs.run_dir` receives the same suffix; otherwise it inherits the dated output directory. Supply undated base paths. Existing same-day folders still require `overwrite=true`. The saved `study.yaml` preserves the original definition, including its undated paths.
+
 The required `project` field is a nonblank string identifying the broader research project, such as `RFEBHM` or `LRBHQM`. Multiple studies can share a project name. It is preserved in the study snapshot and repeated in the manifest's `project` column, without being added to simulation configs or changing the explicit `output_dir`.
 
 The root YAML files preserve the original study definition and template verbatim. The copied study definition is a provenance record: its relative paths still refer to the original study location.

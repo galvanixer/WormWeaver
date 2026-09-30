@@ -97,7 +97,7 @@ using WormWeaver
 study_dir = generate_study(joinpath(homedir(), "Studies", "my_study.yaml"))
 ```
 
-This example creates ten simulation folders, both manifests, provenance, a jobfile, and the two account scripts under `~/Run/my_study`. Generation prepares files; it does not run or submit simulations. `multiwormqmc_path` records the HPC checkout's software provenance.
+This example creates ten simulation folders, both manifests, provenance, a jobfile, and the two account scripts under `~/Run/my_study_YYYY-MM-DD`, using the generation date. Set `append_date: false` to keep the undated name. Generation prepares files; it does not run or submit simulations. `multiwormqmc_path` records the HPC checkout's software provenance.
 
 An existing output folder is rejected. To deliberately replace the entire study, including any previous simulation results:
 
@@ -136,7 +136,8 @@ Newly generated studies include this module command automatically. For an existi
 From the study directory on the HPC, submit **one** account script:
 
 ```bash
-cd /home2020/home/isis/tgupta/Run/my_study
+# Replace YYYY-MM-DD with the generation date shown in the summary.
+cd /home2020/home/isis/tgupta/Run/my_study_YYYY-MM-DD
 sbatch grant_g2026a136c.slurm
 ```
 

@@ -12,7 +12,7 @@ import DataFrames
                         "run" => Dict("seed" => 42, "blocks" => 10))
         YAML.write_file(template, original)
         definition = Dict{String,Any}(
-            "project" => "RFEBHM",
+            "append_date" => false, "project" => "RFEBHM",
             "template" => "./template.yaml", "output_dir" => "generated",
             "overrides" => Dict("run.blocks" => 100),
             "sweep" => Dict("system.beta" => [2.0, 4.0, 8.0],
@@ -91,7 +91,7 @@ import DataFrames
         @test !ispath(joinpath(single, "sim2"))
 
         # Exercise the actual bundled simulation template, including nested arrays.
-        YAML.write_file(source, Dict("project" => "LRBHQM", "output_dir" => "bundled"))
+        YAML.write_file(source, Dict("append_date" => false, "project" => "LRBHQM", "output_dir" => "bundled"))
         bundled = generate_study(source)
         @test YAML.load_file(joinpath(bundled, "sim1", "config.yaml")) ==
               YAML.load_file(joinpath(@__DIR__, "..", "templates", "multiwormqmc", "config.yaml"))
@@ -116,7 +116,7 @@ import DataFrames
         @test native_bundled[1, "model.density_density.alpha"] === nothing
         @test native_bundled[1, "lattice.pbc"][1] isa Bool
         for file in ("../shared/results.h5", joinpath(root, "absolute.h5"))
-            YAML.write_file(source, Dict("project" => "paths", "output_dir" => "path$(basename(file))",
+            YAML.write_file(source, Dict("append_date" => false, "project" => "paths", "output_dir" => "path$(basename(file))",
                 "overrides" => Dict("run.output_file" => file)))
             generated = generate_study(source)
             expected = isabspath(file) ? file : normpath(joinpath("sim1", file))
@@ -124,7 +124,7 @@ import DataFrames
         end
 
         for invalid in (nothing, "", "   ", 123, ["RFEBHM"])
-            bad = Dict{String,Any}("output_dir" => "bad_project", "project" => invalid)
+            bad = Dict{String,Any}("output_dir" => "bad_project", "append_date" => false, "project" => invalid)
             YAML.write_file(source, bad)
             @test_throws ArgumentError generate_study(source)
             @test !ispath(joinpath(root, "bad_project"))
@@ -138,7 +138,7 @@ end
 @testset "Study replacement" begin
     mktempdir() do root
         source = joinpath(root, "study.yaml")
-        definition = Dict{String,Any}("project" => "rewrite", "output_dir" => "output",
+        definition = Dict{String,Any}("append_date" => false, "project" => "rewrite", "output_dir" => "output",
             "sweep" => Dict("system.beta" => [2.0, 4.0]))
         YAML.write_file(source, definition)
         output = generate_study(source; overwrite=true)
@@ -176,7 +176,7 @@ end
 @testset "Random seed replicas" begin
     mktempdir() do root
         source = joinpath(root, "study.yaml")
-        definition = Dict{String,Any}("project" => "seeds", "output_dir" => "default", "replicas" => 10)
+        definition = Dict{String,Any}("append_date" => false, "project" => "seeds", "output_dir" => "default", "replicas" => 10)
         YAML.write_file(source, definition)
         output = generate_study(source)
         native = JLD2.load(joinpath(output, "manifest.jld2"), "manifest")
@@ -225,12 +225,12 @@ end
             Dict("randomize_seeds" => ["run.seed"], "sweep" => Dict("run.seed" => [4, 5])),
             Dict("randomize_seeds" => ["run.seed"], "overrides" => Dict("run" => Dict("seed" => 4))),
         )
-            bad = merge(Dict{String,Any}("project" => "bad", "output_dir" => "bad", "replicas" => 2), changes)
+            bad = merge(Dict{String,Any}("append_date" => false, "project" => "bad", "output_dir" => "bad", "replicas" => 2), changes)
             YAML.write_file(source, bad)
             @test_throws ArgumentError generate_study(source)
             @test !ispath(joinpath(root, "bad"))
         end
-        YAML.write_file(source, Dict("project" => "bad", "output_dir" => "bad", "randomize_seeds" => ["run.seed"]))
+        YAML.write_file(source, Dict("append_date" => false, "project" => "bad", "output_dir" => "bad", "randomize_seeds" => ["run.seed"]))
         @test_throws ArgumentError generate_study(source)
     end
 end
@@ -262,7 +262,7 @@ end
         mkdir(package)
         write(joinpath(package, "Project.toml"), "name = \"MultiwormQMC\"\nversion = \"0.2.3\"\n")
         source = joinpath(root, "study.yaml")
-        definition = Dict{String,Any}("project" => "reproducible", "output_dir" => "one",
+        definition = Dict{String,Any}("append_date" => false, "project" => "reproducible", "output_dir" => "one",
             "replicas" => 3, "seed_generation_seed" => 42, "multiwormqmc_path" => "MultiwormQMC",
             "randomize_seeds" => ["run.seed", "worldlines.init_seed", "model.disorder.seed"],
             "sweep" => Dict("system.beta" => [2.0, 4.0]))
@@ -315,7 +315,7 @@ end
         script = joinpath(root, "fake runner.sh")
         write(script, "printf '%s\\n' \"\$PWD\" \"\$1\" \"\$2\"; echo stderr >&2; test -f \"\$2\"\n")
         literal = "a 'quoted' \$(touch SHOULD_NOT_EXIST) argument"
-        definition = Dict{String,Any}("project" => "jobs", "output_dir" => "study 'quoted' space",
+        definition = Dict{String,Any}("append_date" => false, "project" => "jobs", "output_dir" => "study 'quoted' space",
             "sweep" => Dict("system.beta" => [2.0, 4.0]),
             "jobs" => Dict("command" => ["bash", script, literal]))
         YAML.write_file(source, definition)
@@ -387,7 +387,7 @@ end
 @testset "Generation summary" begin
     mktempdir() do root
         source = joinpath(root, "study.yaml")
-        YAML.write_file(source, Dict("project" => "summary", "output_dir" => "generated",
+        YAML.write_file(source, Dict("append_date" => false, "project" => "summary", "output_dir" => "generated",
             "replicas" => 2, "sweep" => Dict("system.beta" => [2.0, 4.0, 8.0]),
             "jobs" => Dict("mode" => "scratch", "run_dir" => "/cluster/study")))
         capture = joinpath(root, "stdout.txt")
@@ -420,19 +420,19 @@ end
         local_config = Dict("system" => Dict("beta" => 123.0))
         YAML.write_file(joinpath(root, "config_LRBHQM.yaml"), local_config)
         for name in ("config.yaml", "config_LRBHQM.yaml")
-            YAML.write_file(source, Dict("project" => "templates", "output_dir" => name * "_output", "template" => name))
+            YAML.write_file(source, Dict("append_date" => false, "project" => "templates", "output_dir" => name * "_output", "template" => name))
             output = generate_study(source)
             bundled = joinpath(@__DIR__, "..", "templates", "multiwormqmc", name)
             @test read(joinpath(output, "template.yaml")) == read(bundled)
             @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == YAML.load_file(bundled)
         end
         for (i, template) in enumerate(("./config_LRBHQM.yaml", joinpath(root, "config_LRBHQM.yaml")))
-            YAML.write_file(source, Dict("project" => "local", "output_dir" => "local$i", "template" => template))
+            YAML.write_file(source, Dict("append_date" => false, "project" => "local", "output_dir" => "local$i", "template" => template))
             output = generate_study(source)
             @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == local_config
         end
         YAML.write_file(joinpath(root, "custom.yaml"), local_config)
-        YAML.write_file(source, Dict("project" => "bad", "output_dir" => "bad", "template" => "custom.yaml"))
+        YAML.write_file(source, Dict("append_date" => false, "project" => "bad", "output_dir" => "bad", "template" => "custom.yaml"))
         err = try
             generate_study(source)
         catch e
@@ -442,5 +442,40 @@ end
         @test occursin("config_LRBHQM.yaml", sprint(showerror, err))
         @test occursin("./filename.yaml", sprint(showerror, err))
         @test !ispath(joinpath(root, "bad"))
+    end
+end
+
+@testset "Dated study directories" begin
+    mktempdir() do root
+        source = joinpath(root, "study.yaml")
+        definition = Dict{String,Any}("project" => "dated", "output_dir" => "study/")
+        YAML.write_file(source, definition)
+        before = string(WormWeaver.Study.Dates.today())
+        output = generate_study(source)
+        after = string(WormWeaver.Study.Dates.today())
+        @test output in [joinpath(root, "study_" * d) for d in (before, after)]
+        @test occursin(output * "/sim1", read(joinpath(output, "jobfile"), String))
+        @test YAML.load_file(joinpath(output, "study.yaml")) == definition
+        @test_throws ArgumentError generate_study(source)
+        @test generate_study(source; overwrite=true) == output
+        for mode in ("direct", "scratch")
+            definition["output_dir"] = mode
+            definition["jobs"] = Dict("mode" => mode, "run_dir" => "/cluster/study/")
+            YAML.write_file(source, definition)
+            output = generate_study(source)
+            suffix = last(split(output, '_'))
+            @test occursin("/cluster/study_" * suffix * "/sim1", read(joinpath(output, "jobfile"), String))
+        end
+        definition["output_dir"] = "plain"
+        definition["append_date"] = false
+        YAML.write_file(source, definition)
+        @test generate_study(source) == joinpath(root, "plain")
+        for invalid in ("true", 1, nothing)
+            definition["output_dir"] = "invalid_date"
+            definition["append_date"] = invalid
+            YAML.write_file(source, definition)
+            @test_throws ArgumentError generate_study(source)
+            @test !isdir(joinpath(root, "invalid_date"))
+        end
     end
 end
