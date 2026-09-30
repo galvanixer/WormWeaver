@@ -1,0 +1,162 @@
+# Thermodynamic state of the physical system.
+system:
+  beta: 4.0 # Inverse temperature.
+  ensemble: grand_canonical # Statistical ensemble (e.g., grand_canonical).
+
+# Geometry of the simulation cell.
+lattice:
+  geometry: chain  # Lattice geometry (e.g., chain, square, cubic).
+  extent: [16] # Linear size in each spatial direction.
+  pbc: [true] # Periodic boundary conditions in each spatial direction.
+
+# Hamiltonian definition.
+model:
+  family: bose_hubbard # Model family (e.g., bose_hubbard, extended_bose_hubbard).
+  nspecies: 2 # Number of bosonic species/components.
+
+  hopping:
+    kind: power_law  # Hopping structure: nearest_neighbor, power_law etc.
+    J: [1.0, 1.0]  # One hopping amplitude per species.
+    alpha: [1.5, 1.5]  # Power-law decay exponent for hopping, if applicable.
+    distance_cutoff: [null, 1.01]  # Finite-range / truncated hopping cutoff.
+
+  onsite:
+    U: [[20.0, 10.0], [10.0, 20.0]]  # Full species-species onsite interaction matrix.
+    mu: [3.5, 3.5]  # Chemical potentials.
+
+  density_density:
+    kind: none  # Offsite interaction: none, power_law, or pair_power_law.
+    V: [0.0]  # Interaction scale(s).
+    alpha: null  # Long-range decay exponent, if applicable.
+    distance_cutoff: null  # Finite-range / truncated interaction cutoff.
+
+  disorder:
+    kind: none  # Disorder type.
+    strength: 0.0  # Disorder amplitude.
+    seed: 0  # RNG seed for the disorder realization.
+    distribution: uniform  # Disorder distribution: uniform or normal.
+
+# Worldline representation, initialization, and restart settings.
+# `density` is given as exact rationals using explicit numerator/denominator pairs.
+# `maxocc` is the local occupation cutoff per species.
+worldlines:
+  initial_density:
+    - {num: 0, den: 16}  # Species 1 target initialization density.
+    - {num: 0, den: 16}  # Species 2 target initialization density.
+  maxocc: [3, 3]  # Local occupation cutoff per species.
+  restartfile: null  # Optional worldline restart file.
+  init_seed: 14061990  # RNG seed for worldline initialization / restart handling.
+
+# Monte Carlo sampler configuration.
+# This block controls the multiworm sampling scheme and move scheduling.
+sampler:
+  type: multiworm  # Sampler family. Currently only "multiworm" is implemented (and that too not... fully).
+  multiworm_order: 2  # N in the G_N sector.
+
+  sector_weights:
+    # Z(0, 0) is the implicit reference sector with log_eta = 0.0.
+    # Use "explicit" to load entries below, or "zero" to initialize all
+    # scheduled non-Z sectors to 0.0 and ignore entries.
+    initialization: zero
+    entries:
+      - {species_counts: [1, 0], log_eta: 0.0}
+      - {species_counts: [0, 1], log_eta: 0.0}
+      - {species_counts: [1, 1], log_eta: 0.0}
+
+  moves:
+    - source: [0, 0]
+      requests:
+        - {kind: Open, target: [1, 0], weight: 0.5}
+        - {kind: Open, target: [0, 1], weight: 0.5}
+
+    - source: [1, 0]
+      requests:
+        - {kind: Close, target: [0, 0], weight: 0.2}
+        - {kind: ShiftTau, target: [1, 0], weight: 0.2}
+        - {kind: InsertKink, target: [1, 0], weight: 0.2}
+        - {kind: DeleteKink, target: [1, 0], weight: 0.2}
+        - {kind: OpenColocatedAntiAligned, target: [1, 1], weight: 0.2}
+
+    - source: [0, 1]
+      requests:
+        - {kind: Close, target: [0, 0], weight: 0.2}
+        - {kind: ShiftTau, target: [0, 1], weight: 0.2}
+        - {kind: InsertKink, target: [0, 1], weight: 0.2}
+        - {kind: DeleteKink, target: [0, 1], weight: 0.2}
+        - {kind: OpenColocatedAntiAligned, target: [1, 1], weight: 0.2}
+
+    - source: [1, 1]
+      requests:
+        - {kind: CloseColocatedAntiAligned, target: [1, 0], weight: 0.5}
+        - {kind: CloseColocatedAntiAligned, target: [0, 1], weight: 0.5}
+
+observables:
+  z:
+    density: true  # Measure density.
+    particle_histogram: true  # Measure particle-number histograms.
+    energy: true  # Measure energy.
+    compressibility: true  # Measure compressibility.
+    winding: true  # Measure winding numbers.
+    density_density: false  # Measure density-density correlations.
+    structure_factor: false  # Measure structure factor S(k).
+
+  g1:
+    single_particle_green: false  # Enable SPGF sampling after every production attempt.
+    momentum_distribution: false  # Reserved; separate n(k) measurement is not implemented.
+    grtau: false  # G(r, tau).
+    gktau: true  # G(k, tau).
+    gkomega: false  # G(k, omega_n).
+    gromega: false  # G(r, omega_n).
+    gr_equal_time: false  # Unweighted one-sided near-equal-time spatial histogram.
+    equal_time_window: 0.05  # Physical time window above tau=0; must be < beta.
+    ntau: 100  # Number of uniform imaginary-time bins over [0, beta).
+    species: []  # One-based species indices; empty selects all species.
+    momentum_indices: []  # One-based momentum-grid rows; empty selects all momenta.
+    frequency_indices: [0]  # Integer Matsubara n, e.g. [-1, 0, 1]; omega_n = 2*pi*n/beta.
+    # Output stores numerator means, raw counts, and Z references, not normalized G.
+    # See docs/measurements/spgf.md for normalization and HDF5 layout.
+
+  g2:
+    pair_green: false  # G_+(r,tau); requires OpenColocatedAligned moves.
+    counterflow_green: false  # G_-(r,tau); requires OpenColocatedAntiAligned moves.
+    species_pair: []  # Exactly two distinct one-based species when either channel is enabled.
+    grtau: true  # G_+(r,tau) or G_-(r,tau).
+    gktau: false  # Momentum transform at fixed imaginary time.
+    gkomega: false  # Momentum and Matsubara-frequency representation.
+    gromega: false  # Displacement and Matsubara-frequency representation.
+    gr_equal_time: false  # Unweighted one-sided near-equal-time displacement histogram.
+    equal_time_window: 0.05  # Physical time window above tau=0; must be < beta.
+    ntau: 100
+    momentum_indices: []
+    frequency_indices: [0]
+    # See docs/measurements/g2.md for the required colocated move schedule and normalization.
+
+  diagnostics:
+    enabled: true  # Enable diagnostic measurements (e.g., acceptance rates, worm length distributions).
+    output_file: diagnostics.h5  # HDF5 file for diagnostics such as tuning history.
+# Run-control and output settings.
+# These determine burn-in length, production blocks, samples per block, and output path.
+run:
+  tuning:
+    enabled: true  # Enable automatic tuning of sampler parameters.
+    max_attempts: 1000  # Maximum number of adaptation windows.
+    adapt_every: 100  # Run this many do_z_step! calls per adaptation window.
+    stable_windows: 5  # Stop after this many consecutive satisfied windows.
+
+    algorithm:
+      kind: acceptance_guard  # Tune exact sector-weight differences using Open/Close acceptance floors.
+      adaptation_rate: 0.1  # Fraction of each measured acceptance-floor violation applied per window.
+      acceptance_tolerance: 0.9  # Accept rates at or above this fraction of each transition target.
+      min_possible_samples: 20  # Required possible Open and Close proposals per transition.
+      max_log_eta_delta: 1.0  # Maximum absolute edge-difference correction per window.
+
+      transitions:
+        - {source: [0, 0], target: [1, 0], min_open_acceptance: 0.05, min_close_acceptance: 0.05}
+        - {source: [0, 0], target: [0, 1], min_open_acceptance: 0.05, min_close_acceptance: 0.05}
+        - {source: [1, 0], target: [1, 1], min_open_acceptance: 0.2, min_close_acceptance: 0.05}
+        - {source: [0, 1], target: [1, 1], min_open_acceptance: 0.2, min_close_acceptance: 0.05}
+  blocks: 100
+  samples_per_block: 1000
+  burnin_blocks: 10
+  seed: 42
+  output_file: results.h5

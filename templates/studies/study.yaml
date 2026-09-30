@@ -1,34 +1,112 @@
-# Copy this file and set output_dir before generating your study.
-# Uses the bundled simulation template; optional relative paths resolve from this file.
+# GENERAL STUDY TEMPLATE
+# Copy this file and edit output_dir before calling generate_study("study.yaml").
+# Active settings below generate 6 simulations: 3 beta values x 2 mu vectors.
+# Lines starting with # are comments; uncomment optional settings to enable them.
+# Relative file paths resolve from this YAML's directory, not the shell directory.
+# YAML paths do not expand ~ or $HOME; use explicit paths.
+
+# REQUIRED: nonblank research-project name, e.g. RFEBHM or LRBHQM.
+# Stored in both manifests; does not automatically determine folder names.
 project: RFEBHM
+
+# REQUIRED: folder to create on the machine generating the study.
+# May be absolute or relative to this file. Keep generated data outside the repo.
+# Existing folders are rejected unless the Julia call uses overwrite=true.
+# That flag replaces the entire folder, including old results; it is not a YAML key.
 output_dir: /path/to/my_study
 
+# OPTIONAL: simulation config used as the baseline for every run.
+# Omitted: use WormWeaver's bundled templates/multiwormqmc/config.yaml.
+# Custom config beside this study file:
+# template: ./config.yaml
+
+# OPTIONAL: checkout used to record MultiwormQMC version/Git provenance.
+# Must exist on the GENERATION machine and contain MultiwormQMC's Project.toml.
+# Omitted: discover from Julia's environment, or record unavailable if not found.
+# This does not select the executable: set jobs.command for that.
+# multiwormqmc_path: /path/to/multiwormqmc.jl
+
+# CONSTANT PARAMETERS: applied to every generated simulation.
+# Optional; omit or use overrides: {} to retain all template values.
+# Dotted paths address existing config fields; unknown paths are rejected.
+# Arrays replace the whole value; array-index paths such as model.onsite.mu.1
+# are not supported. Do not put a field in both overrides and sweep, or combine
+# a parent path and one of its children (e.g. model and model.onsite.mu).
+# See the simulation template for all available fields. WormWeaver checks paths
+# and basic types, not all physical constraints accepted by multiwormqmc.jl.
 overrides:
+  # One length per spatial dimension; coordinate geometry and pbc accordingly.
   lattice.extent: [32]
+  # Production blocks, samples per block, and optional burn-in blocks.
   run.blocks: 100
   run.samples_per_block: 10000
+  # run.burnin_blocks: 10
 
+  # Examples of other existing simulation fields (uncomment as needed):
+  # model.nspecies: 2                      # Keep species-dependent data consistent.
+  # model.hopping.J: [1.0, 0.8]            # One hopping amplitude per species.
+  # model.onsite.U: [[4.0, 1.5], [1.5, 5.0]]  # Full species interaction matrix.
+  # worldlines.maxocc: [4, 4]              # Occupation cutoff per species.
+  # worldlines.initial_density:           # Exact densities as rational pairs.
+  #   - {num: 2, den: 16}
+  #   - {num: 2, den: 16}
+  # observables.z.energy: true            # Boolean measurement switch.
+  # run.output_file: results.h5            # Relative to each simulation directory.
+  # worldlines.restartfile: null           # No restart file, or supply its path.
+
+# VARIABLE PARAMETERS: each field is a nonempty list of candidate values.
+# Every combination is generated (Cartesian product), not pairwise matching.
+# Omit or use sweep: {} for one parameter combination.
+# Fields are sorted alphabetically; the last field varies fastest.
 sweep:
+  # Scalar parameter: select one scalar per simulation.
   system.beta: [2.0, 4.0, 8.0]
+  # Array parameter: each inner array is ONE complete value, not a species sweep.
+  # Here each chemical-potential vector has two entries, one per species.
   model.onsite.mu:
     - [1.0, 1.0]
     - [2.0, 2.0]
+  # To sweep sizes, REMOVE lattice.extent from overrides first:
+  # lattice.extent: [[16], [32], [64]]
+  # To choose explicit sampling seeds instead of automatic randomization:
+  # run.seed: [101, 102, 103]
 
-# Optional: repeat each parameter combination with fresh sampling seeds.
+# REPLICAS: optional positive integer, multiplying every parameter combination.
+# Omitted: one simulation per combination, with seeds unchanged unless swept
+# or overridden. Present (even 1): randomize run.seed by default.
+# With the sweep above, replicas: 10 would generate 60 simulations.
 # replicas: 10
+
+# Optional with replicas: choose any nonempty subset of these three seed paths.
+# No duplicates. Each selected field gets a distinct positive random seed per run.
+# Unselected fields stay fixed unless explicitly overridden/swept.
+# Selected fields (and their parent blocks) cannot also be overridden or swept.
 # randomize_seeds:
-#   - run.seed
-#   - worldlines.init_seed
-#   - model.disorder.seed
+#   - run.seed                 # Monte Carlo sampling randomness.
+#   - worldlines.init_seed     # Initial worldline configuration randomness.
+#   - model.disorder.seed      # Disorder realization randomness.
 
-# Optional with replicas: reproduce generated seeds.
+# Optional with replicas: nonnegative integer to reproduce generated seeds.
+# Omitted: fresh random seeds on each generation, including overwrite.
+# Reproduction assumes the same settings, field order, Julia version and generator.
+# Study UUIDs still change; actual simulation seeds are saved in both manifests.
 # seed_generation_seed: 12345
-# Optional: record the simulation checkout version and Git revision.
-# multiwormqmc_path: /path/to/multiwormqmc.jl
 
-# Optional: customize the jobfile generated with every study.
+# JOBFILE: optional mapping; jobfile and all bundled .slurm scripts are always made.
+# Omit jobs (or use jobs: {}) for direct execution with [multiwormqmc].
 # jobs:
-#   command: [multiwormqmc]
-#   run_dir: /cluster/path/to/study
+#   # Allowed: direct (default) or scratch.
+#   # direct: run in the simulation folder; scratch: copy/run/copy-back using
+#   # the original HSCAnalysis shell format without extra failure handling.
 #   mode: direct
-# Use mode: scratch and optionally scratch_root: /scratch for node-local execution.
+#   # Nonempty argument list; config.yaml and log redirection are appended.
+#   # Examples: [multiwormqmc] or [julia, /path/to/multiwormqmc.jl/bin/multiwormqmc.jl].
+#   # Executable must be available on the execution machine.
+#   command: [multiwormqmc]
+#   # Absolute study location at execution time; defaults to resolved output_dir.
+#   # Set this separately when generating locally and transferring to the HPC.
+#   run_dir: /cluster/path/to/study
+#   # Only valid with mode: scratch. Absolute path; default /scratch.
+#   # Parent /scratch/job.$SLURM_JOB_ID must already exist when jobs run.
+#   # Scratch commands do not automatically quote paths: avoid spaces/metacharacters.
+#   # scratch_root: /scratch
