@@ -84,16 +84,26 @@ Create a commented study definition from the [general study template](templates/
 
 ```julia
 using WormWeaver
-init_study("my_study.yaml")                   # General preset (default).
-# init_study("my_study.yaml"; preset="unistra-hpc.yaml") # Unistra HPC preset.
+init_study("my_study.yaml")                   # General template (default).
+# init_study("my_study.yaml"; template="unistra-hpc.yaml") # Unistra HPC template.
 
 # Edit my_study.yaml: set output_dir, parameters, and job settings.
 generate_study("my_study.yaml");
 ```
 
-`preset` is the filename inside `templates/studies/` and defaults to `"study.yaml"`. Adding a file there makes it available automatically. Unknown names report the available templates.
+`template` is the filename inside `templates/studies/` and defaults to `"study.yaml"`. Adding a file there makes it available automatically. Unknown names report the available templates.
 
 `init_study` copies the template verbatim, preserving comments, and creates missing parent directories. It returns the absolute YAML path. Existing files are protected unless `overwrite=true` is supplied; directories and symlinks are rejected. It only creates the study definition, without generating simulations or submitting jobs.
+
+To copy a bundled simulation config into a new directory for editing:
+
+```julia
+init_config("my_run/config.yaml"; template="LRBHQM/config_LRBHQM_regular.yaml")
+# Copy every LRBHQM config into a directory, preserving filenames:
+init_config("my_configs"; template="LRBHQM")
+```
+
+`init_config` defaults to `template="config.yaml"`. Templates live in `templates/multiwormqmc/`, with the four LRBHQM variants grouped under `LRBHQM/`. A file template copies to an output file; a group template copies all its files into an output directory. Unique bare filenames such as `config_LRBHQM_regular.yaml` also work. Copies preserve comments and create missing directories. The function returns the absolute output file or directory. Existing files require `overwrite=true`; group copies check all destinations before writing and preserve unrelated directory contents. Symlink destinations are rejected. To use a copied config in a study definition in the same directory, set `template: ./config.yaml` in that study YAML.
 
 After successful generation, WormWeaver prints the simulation count, parameter-combination and replica counts, output directory, job mode, and submission commands for the copied Slurm scripts. It still returns the absolute study directory and does not submit jobs.
 
@@ -113,7 +123,9 @@ sweep:
     - [2.0, 2.0]
 ```
 
-Relative paths are resolved from the study file. Omit `template` to use the bundled `config.yaml`. A bare filename selects a file in `templates/multiwormqmc/`, for example `template: config_LRBHQM.yaml`. Use `template: ./config.yaml`, `../configs/config.yaml`, or an absolute path for a custom file. Bare filenames never fall back to local files; unknown names list the bundled templates. Dotted field names address existing keys in the template. Arrays are replaced in full: each chemical-potential pair above is one sweep value.
+Relative custom paths are resolved from the study file. Omit `template` to use the bundled `config.yaml`. A unique bare filename or a path starting with a bundled group selects a bundled file, for example `template: LRBHQM/config_LRBHQM_regular.yaml`. Use `template: ./config.yaml`, `../configs/config.yaml`, or an absolute path for a custom file. Prefix local paths with `./` when their directory name matches a bundled group. Bare filenames never fall back to local files; unknown names list the bundled templates. Study generation requires one file, so select a variant within a group. Dotted field names address existing keys in the template. Arrays are replaced in full: each chemical-potential pair above is one sweep value.
+
+The LRBHQM group contains regular, aligned, anti-aligned, and single-worm variants. Select `LRBHQM/config_LRBHQM_regular.yaml` for regular `Open`/`Close` moves between `[1, 0]` or `[0, 1]` and `[1, 1]`, or the aligned and anti-aligned variants for their corresponding colocated moves. The single-worm variant never enters `[1, 1]`. Keep `pair_green` and `counterflow_green` disabled with the regular and single-worm variants; those estimators require colocated moves.
 
 This example generates six simulations:
 
@@ -154,7 +166,7 @@ Both manifests have the same columns and one row per simulation:
 | Sampling settings | Production blocks, samples per block, burn-in blocks, and multiworm order. |
 | All overridden or swept fields | Additional selected parameters, taken from each final generated config. |
 
-In `manifest.csv`, scalar values are written directly; arrays and mappings are YAML serialized into CSV cells. Missing or null fields are blank, allowing smaller custom templates. In `manifest.jld2`, the `manifest` key stores a DataFrame with native scalar, array, and dictionary values. Absent fields remain `missing`, while explicit YAML null values remain `nothing`. Large structures such as move schedules and tuning transitions are omitted unless explicitly overridden or swept. The core column list is defined in `CORE_FIELDS` in `src/study.jl`.
+In `manifest.csv`, scalar values are written directly; arrays and mappings are YAML serialized into CSV cells. Missing or null fields are blank, allowing smaller custom templates. In `manifest.jld2`, the `manifest` key stores a DataFrame with native scalar, array, and dictionary values. Absent fields remain `missing`, while explicit YAML null values remain `nothing`. Large structures such as move schedules and tuning transitions are omitted unless explicitly overridden or swept. The core column list is defined in `CORE_FIELDS` in `src/study_generation/study.jl`.
 
 Load the typed manifest for analysis with:
 
