@@ -1,6 +1,7 @@
+# LRBHQM variant with regular Open/Close moves between G1 and G2 sectors.
 # Thermodynamic state of the physical system.
 system:
-  beta: 4.0 # Inverse temperature.
+  beta: 16.0 # Inverse temperature.
   ensemble: grand_canonical # Statistical ensemble (e.g., grand_canonical).
 
 # Geometry of the simulation cell.
@@ -75,7 +76,7 @@ sampler:
         - {kind: ShiftTau, target: [1, 0], weight: 0.2}
         - {kind: InsertKink, target: [1, 0], weight: 0.2}
         - {kind: DeleteKink, target: [1, 0], weight: 0.2}
-        - {kind: OpenColocatedAntiAligned, target: [1, 1], weight: 0.2}
+        - {kind: Open, target: [1, 1], weight: 0.2}
 
     - source: [0, 1]
       requests:
@@ -83,15 +84,15 @@ sampler:
         - {kind: ShiftTau, target: [0, 1], weight: 0.2}
         - {kind: InsertKink, target: [0, 1], weight: 0.2}
         - {kind: DeleteKink, target: [0, 1], weight: 0.2}
-        - {kind: OpenColocatedAntiAligned, target: [1, 1], weight: 0.2}
+        - {kind: Open, target: [1, 1], weight: 0.2}
 
     - source: [1, 1]
       requests:
-        - {kind: CloseColocatedAntiAligned, target: [1, 0], weight: 0.2}
-        - {kind: CloseColocatedAntiAligned, target: [0, 1], weight: 0.2}
-        - {kind: ShiftTauColocated, target: [1, 1], weight: 0.2}
-        - {kind: InsertKinkColocated, target: [1, 1], weight: 0.2}
-        - {kind: DeleteKinkColocated, target: [1, 1], weight: 0.2}
+        - {kind: Close, target: [1, 0], weight: 0.2}
+        - {kind: Close, target: [0, 1], weight: 0.2}
+        - {kind: ShiftTau, target: [1, 1], weight: 0.2}
+        - {kind: InsertKink, target: [1, 1], weight: 0.2}
+        - {kind: DeleteKink, target: [1, 1], weight: 0.2}
 
 observables:
   z:
@@ -107,7 +108,7 @@ observables:
     single_particle_green: false  # Enable SPGF sampling after every production attempt.
     momentum_distribution: false  # Reserved; separate n(k) measurement is not implemented.
     grtau: false  # G(r, tau).
-    gktau: true  # G(k, tau).
+    gktau: false  # G(k, tau).
     gkomega: false  # G(k, omega_n).
     gromega: false  # G(r, omega_n).
     gr_equal_time: false  # Unweighted one-sided near-equal-time spatial histogram.
@@ -123,7 +124,7 @@ observables:
     pair_green: false  # G_+(r,tau); requires OpenColocatedAligned moves.
     counterflow_green: false  # G_-(r,tau); requires OpenColocatedAntiAligned moves.
     species_pair: []  # Exactly two distinct one-based species when either channel is enabled.
-    grtau: true  # G_+(r,tau) or G_-(r,tau).
+    grtau: false  # G_+(r,tau) or G_-(r,tau).
     gktau: false  # Momentum transform at fixed imaginary time.
     gkomega: false  # Momentum and Matsubara-frequency representation.
     gromega: false  # Displacement and Matsubara-frequency representation.
@@ -142,9 +143,16 @@ observables:
 run:
   tuning:
     enabled: true  # Enable automatic tuning of sampler parameters.
-    max_attempts: 1000  # Maximum number of adaptation windows.
+    max_attempts: 10000  # Maximum adaptation windows per beta stage (one stage by default).
     adapt_every: 100  # Run this many do_z_step! calls per adaptation window.
     stable_windows: 5  # Stop after this many consecutive satisfied windows.
+    print_every_windows: 1000  # Print all transitions in first, every Nth, and final windows.
+    beta_annealing:
+      enabled: false  # Set true to tune while cooling toward system.beta.
+      initial_beta: 1.0  # Required when enabled: positive and <= system.beta.
+      growth_factor: 1.5  # Multiply beta between stages; final stage is system.beta.
+      equilibration_samples: 100  # Fixed-eta Z-returning samples before each stage; null uses adapt_every.
+      reset_eta_each_stage: false  # Set true to start every beta stage with all non-Z log_eta = 0.
 
     algorithm:
       kind: acceptance_guard  # Tune exact sector-weight differences using Open/Close acceptance floors.
@@ -161,5 +169,5 @@ run:
   blocks: 100
   samples_per_block: 1000
   burnin_blocks: 10
-  seed: 42
+  seed: 14061990
   output_file: results.h5

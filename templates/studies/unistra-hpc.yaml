@@ -15,7 +15,7 @@ multiwormqmc_path: /home2020/home/isis/tgupta/Code/multiwormqmc.jl
 # For a custom config stored beside this study YAML, uncomment:
 # template: ./config.yaml
 # Or select a bundled template by filename (independent of this file's location):
-# template: config_LRBHQM.yaml
+# template: LRBHQM/config_LRBHQM_regular.yaml
 
 # Example sampling settings; adjust for your simulation study.
 overrides:

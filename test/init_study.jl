@@ -1,14 +1,14 @@
 @testset "Initialize study definition" begin
     mktempdir() do root
-        for preset in ("study.yaml", "unistra-hpc.yaml")
-            path = joinpath(root, preset, "study.yaml")
-            @test init_study(path; preset) == path
-            original = read(joinpath(@__DIR__, "..", "templates", "studies", preset))
+        for template in ("study.yaml", "unistra-hpc.yaml")
+            path = joinpath(root, template, "study.yaml")
+            @test init_study(path; template) == path
+            original = read(joinpath(@__DIR__, "..", "templates", "studies", template))
             @test read(path) == original
             write(path, "user edits")
-            @test_throws ArgumentError init_study(path; preset)
+            @test_throws ArgumentError init_study(path; template)
             @test read(path, String) == "user edits"
-            @test init_study(path; preset, overwrite=true) == path
+            @test init_study(path; template, overwrite=true) == path
             @test read(path) == original
             @test readdir(dirname(path)) == ["study.yaml"]
         end
@@ -16,13 +16,13 @@
             @test realpath(init_study("default.yaml")) == realpath(joinpath(root, "default.yaml"))
             @test read("default.yaml") == read(joinpath(@__DIR__, "..", "templates", "studies", "study.yaml"))
         end
-        @test_throws ArgumentError init_study(joinpath(root, "bad", "study.yaml"); preset="unknown")
+        @test_throws ArgumentError init_study(joinpath(root, "bad", "study.yaml"); template="unknown")
         @test !ispath(joinpath(root, "bad"))
-        for preset in ("../multiwormqmc/config.yaml", "/tmp/study.yaml", "general", "unistra")
-            @test_throws ArgumentError init_study(joinpath(root, "bad.yaml"); preset)
+        for template in ("../multiwormqmc/config.yaml", "/tmp/study.yaml", "general", "unistra")
+            @test_throws ArgumentError init_study(joinpath(root, "bad.yaml"); template)
         end
         err = try
-            init_study(joinpath(root, "bad.yaml"); preset="unknown.yaml")
+            init_study(joinpath(root, "bad.yaml"); template="unknown.yaml")
         catch e
             e
         end

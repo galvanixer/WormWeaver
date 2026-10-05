@@ -54,10 +54,10 @@ Keep study definitions and generated simulation data outside the WormWeaver repo
 
 ```bash
 mkdir -p ~/Studies ~/Run
-julia --project="$HOME/Code/WormWeaver" -e 'using WormWeaver; init_study(ARGS[1]; preset="unistra-hpc.yaml")' "$HOME/Studies/my_study.yaml"
+julia --project="$HOME/Code/WormWeaver" -e 'using WormWeaver; init_study(ARGS[1]; template="unistra-hpc.yaml")' "$HOME/Studies/my_study.yaml"
 ```
 
-Edit the [Unistra HPC study template](../templates/studies/unistra-hpc.yaml) for your project and paths. It uses WormWeaver's bundled simulation config automatically. To select another bundled config, set `template: config_LRBHQM.yaml`. For a custom config, place it beside your study YAML and uncomment `template: ./config.yaml`; the relative path is resolved from the study file's directory. The template generates 30 simulations (three beta values and ten replicas); the minimal example below generates ten.
+Edit the [Unistra HPC study template](../templates/studies/unistra-hpc.yaml) for your project and paths. It uses WormWeaver's bundled simulation config automatically. To select another bundled config, set `template: LRBHQM/config_LRBHQM_regular.yaml`. For a custom config, place it beside your study YAML and uncomment `template: ./config.yaml`; the relative path is resolved from the study file's directory. The template generates 30 simulations (three beta values and ten replicas); the minimal example below generates ten.
 
 ## 4. Generate a study on the HPC
 

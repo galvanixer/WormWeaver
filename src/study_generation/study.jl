@@ -12,10 +12,11 @@ import Random
 include("config_writer.jl")
 include("provenance.jl")
 include("jobs.jl")
+include("templates.jl")
 
 export generate_study
 
-const DEFAULT_TEMPLATE = normpath(joinpath(@__DIR__, "..", "templates", "multiwormqmc", "config.yaml"))
+const DEFAULT_TEMPLATE = joinpath(CONFIG_TEMPLATE_DIR, "config.yaml")
 
 const MANIFEST_METADATA = ("project", "study_id", "simulation", "replica", "config", "output_file", "config_sha256")
 const CORE_FIELDS = [
@@ -139,12 +140,8 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     template_path = get(study, "template", DEFAULT_TEMPLATE)
     template_path isa AbstractString && !isempty(strip(template_path)) ||
         throw(ArgumentError("template must be a nonempty filename or path"))
-    if !isabspath(template_path) && !occursin('/', template_path) && !occursin('\\', template_path)
-        template_dir = dirname(DEFAULT_TEMPLATE)
-        available = sort(filter(name -> isfile(joinpath(template_dir, name)), readdir(template_dir)))
-        template_path in available || throw(ArgumentError(
-            "Unknown bundled template: $template_path; available templates: $(join(available, ", ")). Use ./filename.yaml for a local file."))
-        template_path = joinpath(template_dir, template_path)
+    if is_bundled_template_reference(template_path)
+        template_path = resolve_bundled_template(template_path)
     else
         template_path = resolve(template_path)
     end
@@ -268,7 +265,7 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     try
         write(joinpath(staging, "study.yaml"), study_text)
         write(joinpath(staging, "jobfile"), jobfile)
-        slurm_dir = joinpath(@__DIR__, "..", "templates", "slurm")
+        slurm_dir = joinpath(@__DIR__, "..", "..", "templates", "slurm")
         for name in sort(readdir(slurm_dir))
             template = joinpath(slurm_dir, name)
             endswith(name, ".slurm") && isfile(template) || continue

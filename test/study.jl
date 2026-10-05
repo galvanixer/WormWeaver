@@ -418,15 +418,16 @@ end
     mktempdir() do root
         source = joinpath(root, "study.yaml")
         local_config = Dict("system" => Dict("beta" => 123.0))
-        YAML.write_file(joinpath(root, "config_LRBHQM.yaml"), local_config)
-        for name in ("config.yaml", "config_LRBHQM.yaml")
-            YAML.write_file(source, Dict("append_date" => false, "project" => "templates", "output_dir" => name * "_output", "template" => name))
+        YAML.write_file(joinpath(root, "config_LRBHQM_regular.yaml"), local_config)
+        for (i, name) in enumerate(("config.yaml", "config_LRBHQM_regular.yaml", "LRBHQM/config_LRBHQM_regular.yaml"))
+            YAML.write_file(source, Dict("append_date" => false, "project" => "templates", "output_dir" => "bundled$i", "template" => name))
             output = generate_study(source)
-            bundled = joinpath(@__DIR__, "..", "templates", "multiwormqmc", name)
+            relative = name == "config.yaml" ? name : "LRBHQM/config_LRBHQM_regular.yaml"
+            bundled = joinpath(@__DIR__, "..", "templates", "multiwormqmc", relative)
             @test read(joinpath(output, "template.yaml")) == read(bundled)
             @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == YAML.load_file(bundled)
         end
-        for (i, template) in enumerate(("./config_LRBHQM.yaml", joinpath(root, "config_LRBHQM.yaml")))
+        for (i, template) in enumerate(("./config_LRBHQM_regular.yaml", joinpath(root, "config_LRBHQM_regular.yaml")))
             YAML.write_file(source, Dict("append_date" => false, "project" => "local", "output_dir" => "local$i", "template" => template))
             output = generate_study(source)
             @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == local_config
@@ -439,9 +440,18 @@ end
             e
         end
         @test err isa ArgumentError
-        @test occursin("config_LRBHQM.yaml", sprint(showerror, err))
+        @test occursin("LRBHQM/config_LRBHQM_regular.yaml", sprint(showerror, err))
         @test occursin("./filename.yaml", sprint(showerror, err))
         @test !ispath(joinpath(root, "bad"))
+        # Explicit ./ paths select local files even when the folder is a bundled group.
+        mkpath(joinpath(root, "LRBHQM"))
+        YAML.write_file(joinpath(root, "LRBHQM", "config_LRBHQM_regular.yaml"), local_config)
+        YAML.write_file(source, Dict("append_date" => false, "project" => "local", "output_dir" => "local_group", "template" => "./LRBHQM/config_LRBHQM_regular.yaml"))
+        output = generate_study(source)
+        @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == local_config
+        YAML.write_file(source, Dict("append_date" => false, "project" => "bad", "output_dir" => "bad_group", "template" => "LRBHQM"))
+        @test_throws ArgumentError generate_study(source)
+        @test !ispath(joinpath(root, "bad_group"))
     end
 end
 

@@ -25,7 +25,7 @@ function package_provenance(root, expected_name)
 end
 
 function software_provenance(study, source)
-    wormweaver = package_provenance(normpath(joinpath(@__DIR__, "..")), "WormWeaver")
+    wormweaver = package_provenance(normpath(joinpath(@__DIR__, "..", "..")), "WormWeaver")
     if haskey(study, "multiwormqmc_path")
         path = study["multiwormqmc_path"]
         path isa AbstractString && !isempty(strip(path)) ||
