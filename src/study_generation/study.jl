@@ -99,8 +99,11 @@ stored in the study snapshot and manifest, not in simulation configs.
 Writes a native DataFrame under the `manifest` key in `manifest.jld2`, plus
 `manifest.csv` with structured values serialized as YAML cells. Each study also
 includes `jobfile` and all bundled `.slurm` launchers.
-Sweep paths are sorted alphabetically; the
-last path varies fastest. `replicas` repeats each combination, randomizing
+Ordinary sweep paths are sorted alphabetically. `correlated_sweeps` is a list
+of nonempty field mappings whose equal-length value lists advance together.
+These groups follow ordinary sweep paths in their listed order; independent
+axes form a Cartesian product, with the last axis varying fastest.
+`replicas` repeats each combination, randomizing
 `run.seed` by default; `randomize_seeds` selects which of the three seed fields
 to randomize. Without these options, seeds are preserved unless explicitly overridden.
 An optional `validate_config(config)` callback validates each configuration
@@ -112,7 +115,7 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     source = abspath(path)
     study_text = read(source, String)
     study = mapping(YAML.load(study_text), "Study")
-    allowed = ("project", "template", "output_dir", "overrides", "sweep", "replicas", "randomize_seeds", "seed_generation_seed", "multiwormqmc_path", "jobs", "append_date")
+    allowed = ("project", "template", "output_dir", "overrides", "sweep", "correlated_sweeps", "replicas", "randomize_seeds", "seed_generation_seed", "multiwormqmc_path", "jobs", "append_date")
     for key in keys(study)
         key in allowed || throw(ArgumentError("Unknown study option: $key"))
     end
@@ -149,17 +152,28 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     template = mapping(YAML.load(template_text), "Template")
     overrides = mapping(get(study, "overrides", Dict()), "overrides")
     sweep = mapping(get(study, "sweep", Dict()), "sweep")
-    fields = sort!(collect(union(keys(overrides), keys(sweep))))
+    correlated_sweeps = get(study, "correlated_sweeps", [])
+    correlated_sweeps isa AbstractVector ||
+        throw(ArgumentError("correlated_sweeps must be a list of field mappings"))
+    for (i, group) in enumerate(correlated_sweeps)
+        mapping(group, "Correlated sweep group $i")
+        isempty(group) && throw(ArgumentError("Correlated sweep group $i must not be empty"))
+    end
+    fields = vcat(collect(keys(overrides)), collect(keys(sweep)))
+    for group in correlated_sweeps
+        append!(fields, keys(group))
+    end
+    sort!(fields)
     for field in fields
         field in MANIFEST_METADATA &&
             throw(ArgumentError("Field path conflicts with manifest metadata: $field"))
     end
     for (i, field) in enumerate(fields), other in fields[i+1:end]
+        field == other && throw(ArgumentError(
+            "Field $field appears more than once across overrides, sweep, and correlated_sweeps"))
         startswith(other, field * ".") &&
             throw(ArgumentError("Overlapping field paths: $field and $other"))
     end
-    isempty(intersect(keys(overrides), keys(sweep))) ||
-        throw(ArgumentError("A field cannot appear in both overrides and sweep"))
     replicas = get(study, "replicas", 1)
     replicas isa Integer && !(replicas isa Bool) && 1 <= replicas <= typemax(Int) ||
         throw(ArgumentError("replicas must be a positive integer"))
@@ -202,20 +216,27 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     for field in sort!(collect(keys(overrides)))
         set_field!(base, field, overrides[field])
     end
-    sweep_fields = sort!(collect(keys(sweep)))
-    for field in sweep_fields
-        values = sweep[field]
-        values isa AbstractVector && !isempty(values) ||
-            throw(ArgumentError("Sweep $field must be a nonempty list of values"))
-        for value in values
-            set_field!(deepcopy(base), field, value)
+    # Each ordinary field is one axis; each correlated group is one joint axis.
+    sweep_axes = AbstractDict[Dict(field => sweep[field]) for field in sort!(collect(keys(sweep)))]
+    append!(sweep_axes, correlated_sweeps)
+    axis_fields = [sort!(collect(keys(axis))) for axis in sweep_axes]
+    for (i, axis) in enumerate(sweep_axes)
+        for field in axis_fields[i]
+            values = axis[field]
+            values isa AbstractVector && !isempty(values) ||
+                throw(ArgumentError("Sweep $field must be a nonempty list of values"))
+            length(values) == length(axis[first(axis_fields[i])]) || throw(ArgumentError(
+                "Correlated sweep group $(i - length(sweep)) must have equal-length value lists"))
+            for value in values
+                set_field!(deepcopy(base), field, value)
+            end
         end
     end
 
     configs = Any[]
     replica_numbers = Int[]
     function expand(config, index)
-        if index > length(sweep_fields)
+        if index > length(sweep_axes)
             for replica in 1:replicas
                 instance = deepcopy(config)
                 for field in seed_fields
@@ -227,10 +248,13 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
             end
             return
         end
-        field = sweep_fields[index]
-        for value in sweep[field]
+        axis = sweep_axes[index]
+        paths = axis_fields[index]
+        for row in eachindex(axis[first(paths)])
             next = deepcopy(config)
-            set_field!(next, field, value)
+            for field in paths
+                set_field!(next, field, axis[field][row])
+            end
             expand(next, index + 1)
         end
     end

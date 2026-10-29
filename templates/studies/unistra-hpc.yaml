@@ -1,54 +1,45 @@
-# Copy to ~/Studies/my_study.yaml on Unistra and edit before generating.
-# Replace account-specific paths if needed. Use absolute paths without spaces
-# for the original-style scratch jobfile. YAML paths do not expand ~ or $HOME.
-project: LRBHQM
-output_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test
+# Edit account-specific paths before calling generate_study("unistra-hpc.yaml").
+# Generates 60 simulations: 3 (extent, beta) pairs x 2 mu vectors x 10 replicas.
+# Scratch paths must be absolute, without spaces; ~ and $HOME are not expanded.
+project: LRBHQM  # Any nonempty project name.
+output_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test  # Generation path; may differ from jobs.run_dir.
 
-# By default, append the generation machine's local date (_YYYY-MM-DD).
-# Also suffixes an explicit jobs.run_dir. Set false to keep undated paths.
-# append_date: false
+# append_date: false  # true (default, adds _YYYY-MM-DD) or false.
+# template: ./config.yaml  # Bundled filename or custom path; default: config.yaml.
 
-# This checkout must be accessible on the machine generating the study.
-multiwormqmc_path: /home2020/home/isis/tgupta/Code/multiwormqmc.jl
+multiwormqmc_path: /home2020/home/isis/tgupta/Code/multiwormqmc.jl  # Local checkout for provenance; omit to auto-discover.
 
-# Omit template to use WormWeaver's bundled simulation config.
-# For a custom config stored beside this study YAML, uncomment:
-# template: ./config.yaml
-# Or select a bundled template by filename (independent of this file's location):
-# template: LRBHQM/config_LRBHQM_regular.yaml
-
-# Example sampling settings; adjust for your simulation study.
+# Constants applied to every simulation.
 overrides:
   run.blocks: 100
   run.samples_per_block: 10000
   run.burnin_blocks: 10
 
-# Three beta values x ten replicas = 30 simulation folders.
-# Remove sweep to generate ten replicas of a single parameter combination.
+# All combinations of independent values and correlated groups are generated.
 sweep:
-  system.beta: [2.0, 4.0, 8.0]
+  model.onsite.mu:
+    - [1.0, 1.0]
+    - [2.0, 2.0]
 
-replicas: 10
-seed_generation_seed: 12345
-randomize_seeds:
+# Fields within each group advance together; lists must be nonempty and equal-length.
+correlated_sweeps:
+  - lattice.extent: [[16], [32], [64]]
+    system.beta: [2.0, 4.0, 8.0]
+
+replicas: 10  # Any positive integer; omit for one simulation per combination.
+seed_generation_seed: 12345  # Nonnegative integer; omit for fresh random seeds each generation.
+randomize_seeds:  # Nonempty subset of the paths below; default: [run.seed].
   - run.seed
   - worldlines.init_seed
-  # Uncomment to vary disorder realizations too:
   # - model.disorder.seed
 
 jobs:
-  mode: scratch
-  command:
+  mode: scratch  # direct (default) or scratch.
+  command:  # Argument list; default: [multiwormqmc].
     - julia
     - /home2020/home/isis/tgupta/Code/multiwormqmc.jl/bin/multiwormqmc.jl
-  # Must match the study's location when the batch job executes.
-  run_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test
-  scratch_root: /scratch
+  run_dir: /home2020/home/isis/tgupta/Study/LRBHQM/LRBHQM_test  # Absolute execution path; omit to use the generated study directory.
+  scratch_root: /scratch  # Any absolute directory; only for scratch mode.
 
-# Generated studies include both account scripts, loading gcc/15.2.0:
-#   grant_g2026a136c.slurm
-#   grantgpu_g2026a136g.slurm
-# Submit one from the generated study directory.
-# The cluster must provide /scratch/job.$SLURM_JOB_ID and hpc_multilauncher.
-# If generating locally, change output_dir and multiwormqmc_path to local paths,
-# keep jobs.command and jobs.run_dir pointing to the HPC, then transfer the study.
+# Requires hpc_multilauncher and an existing /scratch/job.$SLURM_JOB_ID directory.
+# Submit one generated account .slurm script from the study directory.

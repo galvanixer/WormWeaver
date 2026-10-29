@@ -135,6 +135,159 @@ import DataFrames
     end
 end
 
+@testset "Correlated sweeps" begin
+    mktempdir() do root
+        source = joinpath(root, "study.yaml")
+        template = Dict(
+            "system" => Dict("beta" => 1.0), "lattice" => Dict("extent" => [8]),
+            "model" => Dict("mu" => [0.0, 0.0]),
+            "run" => Dict("seed" => 42, "blocks" => 10),
+            "tuning" => Dict("weight" => 0.0, "label" => "default"))
+        YAML.write_file(joinpath(root, "template.yaml"), template)
+        write(source, """
+        project: finite-size
+        template: ./template.yaml
+        output_dir: paired
+        append_date: false
+        correlated_sweeps:
+          - lattice.extent: [[16], [32], [64]]
+            system.beta: [16.0, 32.0, 64.0]
+            tuning.weight: [0.1, 0.2, 0.3]
+        """)
+        output = generate_study(source)
+        paired = JLD2.load(joinpath(output, "manifest.jld2"), "manifest")
+        @test size(paired, 1) == 3
+        @test paired[!, "lattice.extent"] == [[16], [32], [64]]
+        @test paired[!, "system.beta"] == [16.0, 32.0, 64.0]
+        @test paired[!, "tuning.weight"] == [0.1, 0.2, 0.3]
+        @test paired.replica == [1, 1, 1]
+        @test paired[!, "run.seed"] == [42, 42, 42]
+        @test read(joinpath(output, "study.yaml")) == read(source)
+
+        # Independent fields and groups form a product; replicas vary fastest.
+        definition = YAML.load_file(source)
+        definition["output_dir"] = "mixed"
+        definition["sweep"] = Dict("model.mu" => [[1.0, 1.0], [2.0, 2.0]])
+        push!(definition["correlated_sweeps"], Dict(
+            "run.blocks" => [10, 20], "tuning.label" => ["short", "long"]))
+        definition["replicas"] = 2
+        definition["seed_generation_seed"] = 123
+        YAML.write_file(source, definition)
+        validated = Ref(0)
+        output = generate_study(source; validate_config=c -> begin
+            @test c["system"]["beta"] == only(c["lattice"]["extent"])
+            @test (c["run"]["blocks"], c["tuning"]["label"]) in ((10, "short"), (20, "long"))
+            validated[] += 1
+        end)
+        native = JLD2.load(joinpath(output, "manifest.jld2"), "manifest")
+        csv = CSV.read(joinpath(output, "manifest.csv"), DataFrames.DataFrame)
+        expected = [(mu, extent, beta, weight, blocks, label, replica)
+                    for mu in ([1.0, 1.0], [2.0, 2.0])
+                    for (extent, beta, weight) in (([16], 16.0, 0.1), ([32], 32.0, 0.2), ([64], 64.0, 0.3))
+                    for (blocks, label) in ((10, "short"), (20, "long"))
+                    for replica in 1:2]
+        @test size(native, 1) == validated[] == length(expected) == 24
+        @test length(readlines(joinpath(output, "jobfile"))) == 24
+        @test length(unique(native[!, "run.seed"])) == 24
+        for (i, (mu, extent, beta, weight, blocks, label, replica)) in enumerate(expected)
+            config = YAML.load_file(joinpath(output, "sim$i", "config.yaml"))
+            @test config["model"]["mu"] == native[i, "model.mu"] == mu
+            @test config["lattice"]["extent"] == native[i, "lattice.extent"] == extent
+            @test config["system"]["beta"] == native[i, "system.beta"] == csv[i, "system.beta"] == beta
+            @test config["tuning"]["weight"] == native[i, "tuning.weight"] == csv[i, "tuning.weight"] == weight
+            @test config["tuning"]["label"] == native[i, "tuning.label"] == csv[i, "tuning.label"] == label
+            @test config["run"]["blocks"] == native[i, "run.blocks"] == blocks
+            @test config["run"]["seed"] == native[i, "run.seed"] == csv[i, "run.seed"]
+            @test native.replica[i] == csv.replica[i] == replica
+            @test YAML.load(String(csv[i, "lattice.extent"])) == extent
+            @test native.config_sha256[i] == bytes2hex(SHA.sha256(read(joinpath(output, "sim$i", "config.yaml"))))
+        end
+        @test YAML.load_file(joinpath(root, "template.yaml")) == template
+        definition["output_dir"] = "repeat"
+        YAML.write_file(source, definition)
+        repeat = generate_study(source)
+        @test JLD2.load(joinpath(repeat, "manifest.jld2"), "manifest").config_sha256 == native.config_sha256
+
+        # An empty outer list leaves ordinary sweeps unchanged; singleton groups work.
+        delete!(definition, "replicas")
+        delete!(definition, "seed_generation_seed")
+        definition["correlated_sweeps"] = []
+        definition["output_dir"] = "empty"
+        YAML.write_file(source, definition)
+        empty_output = generate_study(source)
+        @test size(JLD2.load(joinpath(empty_output, "manifest.jld2"), "manifest"), 1) == 2
+        delete!(definition, "sweep")
+        definition["correlated_sweeps"] = [Dict("system.beta" => [8.0])]
+        definition["output_dir"] = "singleton"
+        YAML.write_file(source, definition)
+        single = generate_study(source)
+        @test JLD2.load(joinpath(single, "manifest.jld2"), "manifest")[!, "system.beta"] == [8.0]
+    end
+end
+
+@testset "Correlated sweep validation" begin
+    mktempdir() do root
+        source = joinpath(root, "study.yaml")
+        base = Dict{String,Any}("append_date" => false, "project" => "bad", "output_dir" => "invalid")
+        invalid_groups = (
+            nothing, Dict(), "bad", true, [1], [[]], [Dict()], [Dict(1 => [2])],
+            [Dict("system.beta" => [])], [Dict("system.beta" => 2.0)],
+            [Dict("system.beta" => [2.0, 4.0], "lattice.extent" => [[16]])],
+            [Dict("system.beta" => ["bad"])], [Dict("missing.field" => [1])],
+            [Dict("system..beta" => [2.0])], [Dict("system.beta" => [2.0, "bad"])],
+            [Dict("system.beta" => [2.0]), Dict("system.beta" => [4.0])],
+            [Dict("model" => [Dict()]), Dict("model.onsite.mu" => [[1.0, 1.0]])],
+            [Dict("model" => [Dict()], "model.onsite.mu" => [[1.0, 1.0]])],
+        )
+        for groups in invalid_groups
+            YAML.write_file(source, merge(base, Dict("correlated_sweeps" => groups)))
+            calls = Ref(0)
+            @test_throws ArgumentError generate_study(source; validate_config=c -> (calls[] += 1))
+            @test calls[] == 0
+            @test !ispath(joinpath(root, "invalid"))
+        end
+        for metadata in WormWeaver.Study.MANIFEST_METADATA
+            YAML.write_file(source, merge(base, Dict("correlated_sweeps" => [Dict(metadata => [1])])))
+            @test_throws ArgumentError generate_study(source)
+            @test !ispath(joinpath(root, "invalid"))
+        end
+        for changes in (
+            Dict("overrides" => Dict("system.beta" => 2.0),
+                 "correlated_sweeps" => [Dict("system.beta" => [4.0])]),
+            Dict("sweep" => Dict("system.beta" => [2.0]),
+                 "correlated_sweeps" => [Dict("system.beta" => [4.0])]),
+            Dict("overrides" => Dict("model" => Dict()),
+                 "correlated_sweeps" => [Dict("model.onsite.mu" => [[1.0, 1.0]])]),
+            Dict("sweep" => Dict("model.onsite.mu" => [[1.0, 1.0]]),
+                 "correlated_sweeps" => [Dict("model" => [Dict()])]),
+            Dict("replicas" => 2, "correlated_sweeps" => [Dict("run.seed" => [123])]),
+            Dict("replicas" => 2, "correlated_sweeps" => [Dict("run" => [Dict("seed" => 123)])]),
+            Dict("replicas" => 2, "randomize_seeds" => ["model.disorder.seed"],
+                 "correlated_sweeps" => [Dict("model.disorder.seed" => [123])]),
+        )
+            YAML.write_file(source, merge(base, changes))
+            @test_throws ArgumentError generate_study(source)
+            @test !ispath(joinpath(root, "invalid"))
+        end
+
+        # Explicit seeds remain supported if they are not selected for randomization.
+        definition = merge(base, Dict("output_dir" => "seeds", "replicas" => 2,
+            "randomize_seeds" => ["worldlines.init_seed"],
+            "correlated_sweeps" => [Dict("system.beta" => [2.0, 4.0], "run.seed" => [101, 102])]))
+        YAML.write_file(source, definition)
+        output = generate_study(source)
+        native = JLD2.load(joinpath(output, "manifest.jld2"), "manifest")
+        @test native[!, "run.seed"] == [101, 101, 102, 102]
+        @test native[!, "system.beta"] == [2.0, 2.0, 4.0, 4.0]
+        @test length(unique(native[!, "worldlines.init_seed"])) == 4
+        manifest = read(joinpath(output, "manifest.jld2"))
+        definition["correlated_sweeps"][1]["system.beta"] = [2.0]
+        YAML.write_file(source, definition)
+        @test_throws ArgumentError generate_study(source; overwrite=true)
+        @test read(joinpath(output, "manifest.jld2")) == manifest
+    end
+end
+
 @testset "Study replacement" begin
     mktempdir() do root
         source = joinpath(root, "study.yaml")
