@@ -13,8 +13,9 @@ include("aggregation/single_particle_green.jl")
 include("aggregation/observable_io.jl")
 include("aggregation/aggregate.jl")
 include("aggregation/observable_table.jl")
+include("monitoring/study_status.jl")
 
 export generate_study, init_study, init_config, aggregate, observable_table
-export green_ratio_statistics
+export green_ratio_statistics, study_status, status_summary
 
 end

@@ -180,6 +180,28 @@ Here `study_dir` is the directory returned by `generate_study`. Both manifests a
 
 Metadata column names (`project`, `study_id`, `simulation`, `replica`, `config`, `output_file`, and `config_sha256`) are reserved and cannot be override or sweep paths. Use `run.output_file` to change a simulation's output filename. Identical study definitions produce the same simulation ordering, but receive a fresh study ID when generated again. When replica randomization is enabled without `seed_generation_seed`, generated seeds and config hashes also change. The study ID is stored in the manifest and remains unchanged when the study directory is moved. Execution status and scheduler job IDs are not part of this generation manifest.
 
+### Simulation status
+
+```julia
+statuses = study_status(study_dir)
+```
+
+Reads the typed manifest (falling back to CSV) and each simulation's log, returning
+`simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`, and `failed`.
+Lattice sizes remain arrays, such as `[64]` or `[16, 16]`.
+Statuses advance from `Pre Tuning`, `Tuning`, `Thermalizing`, and
+`Production Started` through `Checkpoint 1`–`Checkpoint 4` to `Finished`.
+Checkpoint stages reflect saved checkpoints; `Finished` requires a success summary.
+Failures retain their last stage with `failed=true`. Missing logs are `Pre Tuning`;
+`failed=false` does not establish that a process is running. This function only
+reads the files and does not modify the manifest, logs, or simulation outputs.
+
+Use `status_summary(statuses)` to count simulations for each combination of
+`lattice_size`, `beta`, `status`, and `failed`. The returned count column is
+`n_simulations`; failed runs remain separate from other runs at the same stage.
+
+### Sweep ordering
+
 Ordinary `sweep` paths are sorted alphabetically, with the last path varying fastest and values following their listed order. Omitting both `sweep` and `correlated_sweeps` generates one parameter combination. Without `replicas`, it produces one simulation with `replica = 1`; seeds remain unchanged unless explicitly included in overrides or sweeps. Run each simulation from its own directory when using relative output filenames such as `results.h5`.
 
 ### Correlated sweeps
