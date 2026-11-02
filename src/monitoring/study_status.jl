@@ -117,18 +117,33 @@ function _study_status(root::AbstractString, manifest)
 end
 
 """
-    status_summary(df::AbstractDataFrame) -> DataFrame
+    status_summary(df::AbstractDataFrame; io=stdout) -> DataFrame
 
 Summarize a `study_status` table by `lattice_size`, `beta`, `status`, and `failed`,
 with a count column named `n_simulations`. Failed runs remain separate from
 other runs at the same stage. Only observed combinations are returned, in order
 of first appearance; missing lattice sizes or beta values are retained.
-The input table is not modified.
+Print the total number of simulations, successful finishes, failures, and runs
+left before returning the grouped table. Successful runs have `status="Finished"`
+and `failed=false`; failures take precedence. Runs left are neither successful
+nor failed, regardless of whether their processes are currently running.
+Use `io` to redirect this output. The input table is not modified.
 """
-function status_summary(df::DataFrames.AbstractDataFrame)
+function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout)
     columns = [:lattice_size, :beta, :status, :failed]
     all(column -> hasproperty(df, column), columns) ||
         throw(ArgumentError("status table must contain lattice_size, beta, status, and failed"))
-    return DataFrames.combine(DataFrames.groupby(df, columns; sort=false),
-                              DataFrames.nrow => :n_simulations)
+    summary = DataFrames.combine(DataFrames.groupby(df, columns; sort=false),
+                                 DataFrames.nrow => :n_simulations)
+    total = DataFrames.nrow(df)
+    failed = count(identity, df.failed)
+    finished = count(row -> row.status == "Finished" && !row.failed, eachrow(df))
+    left = total - finished - failed
+    println()
+    println(io, "Total simulations: ", total)
+    println(io, "Finished successfully: ", finished)
+    println(io, "Failed: ", failed)
+    println(io, "Left: ", left)
+    println(io)
+    return summary
 end

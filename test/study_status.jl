@@ -10,18 +10,29 @@ import JLD2
                 "Finished", "Pre Tuning", "Pre Tuning"],
         failed=[false, false, true, false, false, false, false, false, false])
     original = deepcopy(df)
-    summary = status_summary(df)
+    io = IOBuffer()
+    summary = status_summary(df; io)
+    @test String(take!(io)) == "Total simulations: 9\nFinished successfully: 5\nFailed: 1\nLeft: 3\n\n"
     @test names(summary) == ["lattice_size", "beta", "status", "failed", "n_simulations"]
     @test summary.n_simulations == [2, 1, 1, 1, 1, 1, 2]
     @test isequal(summary[:, 1:4], df[[1, 3, 4, 5, 6, 7, 8], :])
     @test sum(summary.n_simulations) == DataFrames.nrow(df)
     @test isequal(df, original)
 
-    empty = status_summary(df[1:0, :])
+    empty = status_summary(df[1:0, :]; io)
+    @test String(take!(io)) == "Total simulations: 0\nFinished successfully: 0\nFailed: 0\nLeft: 0\n\n"
     @test DataFrames.nrow(empty) == 0
     @test names(empty) == names(summary)
     @test eltype(empty.n_simulations) == Int
     @test_throws ArgumentError status_summary(DataFrames.select(df, DataFrames.Not(:failed)))
+
+    # A failure after finishing is not counted as a success; the final
+    # checkpoint alone also does not establish successful finalization.
+    terminal = DataFrames.DataFrame(lattice_size=[[64], [64], [64]], beta=fill(64.0, 3),
+                                   status=["Finished", "Finished", "Checkpoint 4"],
+                                   failed=[false, true, false])
+    status_summary(terminal; io)
+    @test String(take!(io)) == "Total simulations: 3\nFinished successfully: 1\nFailed: 1\nLeft: 1\n\n"
 end
 
 @testset "Study status" begin
