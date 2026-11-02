@@ -80,6 +80,9 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=.
 ```
 
+Revise is optional and is not installed automatically. For live code reloading,
+install it in your development environment and load `using Revise` before `using WormWeaver`.
+
 Create a commented study definition from the [general study template](templates/studies/study.yaml):
 
 ```julia
@@ -158,6 +161,7 @@ Both manifests have the same columns and one row per simulation:
 | Columns | Contents |
 | --- | --- |
 | `project`, `study_id`, `simulation`, `replica` | Project name, a new UUID per generated study, local folder name, and replica number within each parameter combination. |
+| `template` | Bundled template name, including its group (for example `LRBHQM/config_LRBHQM_regular.yaml`), or the absolute source path for a custom template. Defaults to `config.yaml`; the exact template contents are preserved in the study-root `template.yaml`. |
 | `config`, `output_file` | Config and expected results paths relative to the study directory. An explicitly absolute results path stays absolute. |
 | `config_sha256` | SHA-256 of the exact generated config file bytes, for detecting subsequent edits. |
 | `system.*`, `lattice.*` | Temperature, ensemble, geometry, extents, and boundary conditions. |
@@ -178,7 +182,7 @@ mu = manifest[1, "model.onsite.mu"]  # A native array; no YAML parsing needed.
 
 Here `study_dir` is the directory returned by `generate_study`. Both manifests are generated together from the same data; editing one afterward does not update the other.
 
-Metadata column names (`project`, `study_id`, `simulation`, `replica`, `config`, `output_file`, and `config_sha256`) are reserved and cannot be override or sweep paths. Use `run.output_file` to change a simulation's output filename. Identical study definitions produce the same simulation ordering, but receive a fresh study ID when generated again. When replica randomization is enabled without `seed_generation_seed`, generated seeds and config hashes also change. The study ID is stored in the manifest and remains unchanged when the study directory is moved. Execution status and scheduler job IDs are not part of this generation manifest.
+Metadata column names (`project`, `study_id`, `template`, `simulation`, `replica`, `config`, `output_file`, and `config_sha256`) are reserved and cannot be override or sweep paths. Use `run.output_file` to change a simulation's output filename. Identical study definitions produce the same simulation ordering, but receive a fresh study ID when generated again. When replica randomization is enabled without `seed_generation_seed`, generated seeds and config hashes also change. The study ID is stored in the manifest and remains unchanged when the study directory is moved. Execution status and scheduler job IDs are not part of this generation manifest.
 
 ### Simulation status
 
@@ -199,6 +203,10 @@ reads the files and does not modify the manifest, logs, or simulation outputs.
 Use `status_summary(statuses)` to count simulations for each combination of
 `lattice_size`, `beta`, `status`, and `failed`. The returned count column is
 `n_simulations`; failed runs remain separate from other runs at the same stage.
+Before returning the table, it prints the total number of simulations, how many
+finished successfully, how many failed, and how many are left. Runs left have
+neither finished successfully nor failed. Use `io` to redirect this output,
+for example `status_summary(statuses; io=devnull)` to suppress the totals.
 
 ### Sweep ordering
 
