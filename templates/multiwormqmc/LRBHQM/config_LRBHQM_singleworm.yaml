@@ -89,17 +89,17 @@ observables:
     energy: true  # Measure energy.
     compressibility: true  # Measure compressibility.
     winding: true  # Measure winding numbers.
-    density_density: false  # Measure density-density correlations.
-    structure_factor: false  # Measure structure factor S(k).
+    density_density: true  # Measure density-density correlations.
+    structure_factor: true  # Measure structure factor S(k).
 
   g1:
-    single_particle_green: false  # Enable SPGF sampling after every production attempt.
+    single_particle_green: true  # Enable SPGF sampling after every production attempt.
     momentum_distribution: false  # Reserved; separate n(k) measurement is not implemented.
     grtau: false  # G(r, tau).
-    gktau: false  # G(k, tau).
+    gktau: true  # G(k, tau).
     gkomega: false  # G(k, omega_n).
     gromega: false  # G(r, omega_n).
-    gr_equal_time: false  # Unweighted one-sided near-equal-time spatial histogram.
+    gr_equal_time: true  # Unweighted one-sided near-equal-time spatial histogram.
     equal_time_window: 0.05  # Physical time window above tau=0; must be < beta.
     ntau: 100  # Number of uniform imaginary-time bins over [0, beta).
     species: []  # One-based species indices; empty selects all species.
@@ -136,9 +136,9 @@ run:
     stable_windows: 5  # Stop after this many consecutive satisfied windows.
     print_every_windows: 1000  # Print all transitions in first, every Nth, and final windows.
     beta_annealing:
-      enabled: false  # Set true to tune while cooling toward system.beta.
+      enabled: true  # Set true to tune while cooling toward system.beta.
       initial_beta: 1.0  # Required when enabled: positive and <= system.beta.
-      growth_factor: 1.5  # Multiply beta between stages; final stage is system.beta.
+      growth_factor: 2.0  # Multiply beta between stages; final stage is system.beta.
       equilibration_samples: 100  # Fixed-eta Z-returning samples before each stage; null uses adapt_every.
       reset_eta_each_stage: false  # Set true to start every beta stage with all non-Z log_eta = 0.
 
