@@ -90,6 +90,11 @@ function study_status(root::AbstractString)
     else
         throw(ArgumentError("no manifest.jld2 or manifest.csv found in $root"))
     end
+    return _study_status(root, manifest)
+end
+
+# Reuse the manifest snapshot already loaded by aggregation.
+function _study_status(root::AbstractString, manifest)
     manifest isa DataFrames.AbstractDataFrame ||
         throw(ArgumentError("manifest must be a DataFrame"))
     all(name -> name in names(manifest), ("simulation", "config")) ||

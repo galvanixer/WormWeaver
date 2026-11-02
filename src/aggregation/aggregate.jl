@@ -38,18 +38,17 @@ function read_observable_summary(file, observable, expected_blocks; min_blocks, 
     data = read_observable_data(file, observable, definition)
     ismissing(data) && return missing
     histories, counts, metadata = data.histories, data.counts, data.metadata
+    if isempty(counts)
+        @warn "$observable has no saved blocks; leaving the $observable cell missing" file=HDF5.filename(file)
+        return missing
+    end
+    length(counts) <= expected_blocks || throw(ArgumentError(
+        "$observable has $(length(counts)) blocks, but the manifest expects $expected_blocks"))
     if observable == "ParticlesHistogram"
         validate_particle_histogram(histories, counts, metadata)
     elseif observable == "SingleParticleGreenFunction"
         validate_single_particle_green(histories, counts, metadata)
     end
-    if length(counts) < expected_blocks
-        @warn "$observable run is incomplete; leaving the $observable cell missing" file=HDF5.filename(file) saved_blocks=length(counts) expected_blocks
-        return missing
-    end
-    length(counts) == expected_blocks || throw(ArgumentError(
-        "$observable has $(length(counts)) blocks, but the manifest expects $expected_blocks"))
-
     if observable == "ParticlesHistogram"
         return particle_histogram_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
     elseif observable == "SingleParticleGreenFunction"
@@ -93,7 +92,15 @@ end
         output="aggregated.jld2", overwrite=false) -> DataFrame
 
 Read `manifest.jld2` and each simulation's HDF5 block histories. Preserve manifest
-rows and add a dictionary column for each selected observable. Density, energy,
+rows, add `status`, `failed`, and `completed_blocks` from `study_status`, and add a
+dictionary column for each selected observable. The manifest must include
+`simulation`, `config`, `output_file`, and `run.blocks`. Simulations with zero
+logged completed blocks are skipped, retaining rows with missing observable
+summaries. Missing logs count as zero completed blocks.
+Failed runs with saved production blocks remain eligible.
+For eligible runs, summarize all valid saved blocks up to the planned count;
+each observable's `nblocks` records its actual history length, which may differ
+from the logged `completed_blocks`. Density, energy,
 and winding fields contain native Measurements.jl values (mean ± standard error).
 Particle histograms retain checked integer sums across blocks and add normalized
 probabilities and first/second particle-number moments with repeated-blocking
@@ -136,8 +143,9 @@ successive pairwise blocking levels, retaining at least `min_blocks` blocks at
 each additional level. Means use
 all original blocks and sample-count weights. A single saved block gives an
 undefined (NaN) error.
-Missing files, absent groups, and incomplete observable histories leave missing
-cells and emit warnings; complete observables in the same run still contribute.
+`min_blocks` controls additional blocking levels, not aggregation eligibility.
+Missing files, absent groups, and empty observable histories leave missing
+cells and emit warnings; other observables in the same run still contribute.
 Invalid data throw an error. Particle histograms require explicit sum reduction
 metadata, as do SPGF sum fields; mean observables accept legacy files without reduction metadata as
 block means. Histogram summaries contain counts with aggregation_method="sum",
@@ -162,7 +170,7 @@ compressibility uncertainties.
 
 Save the table under the `aggregate` key in `output`, relative to the study folder
 unless absolute. Set `output=nothing` to only return the table. Existing outputs
-require `overwrite=true`; source results and manifests are never overwritten.
+require `overwrite=true`; source manifests, configs, logs, and results are never overwritten.
 """
 function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
                    min_blocks::Integer=10,
@@ -183,8 +191,10 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     manifest isa DataFrames.AbstractDataFrame || throw(ArgumentError("manifest must be a DataFrame"))
     all(name -> name in names(manifest), ("output_file", "run.blocks")) ||
         throw(ArgumentError("manifest must contain output_file and run.blocks"))
-    any(name -> name in names(manifest), selected) &&
-        throw(ArgumentError("manifest already contains a selected observable column"))
+    status_columns = ["status", "failed", "completed_blocks"]
+    any(name -> name in names(manifest), [selected; status_columns]) &&
+        throw(ArgumentError("manifest already contains a selected observable or status column"))
+    statuses = _study_status(root, manifest)
     destination = output === nothing ? nothing : normpath(joinpath(root, output))
     if destination !== nothing
         isempty(strip(output)) && throw(ArgumentError("output must be a nonempty path"))
@@ -192,12 +202,12 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
         append!(protected, [normpath(joinpath(root, file)) for file in manifest.output_file
                             if file isa AbstractString])
         for row in eachrow(manifest)
-            "config" in names(manifest) && row.config isa AbstractString &&
-                push!(protected, normpath(joinpath(root, row.config)))
+            config_path = normpath(joinpath(root, row.config))
+            push!(protected, config_path, joinpath(dirname(config_path), "simulation.log"))
         end
         real_destination = ispath(destination) ? realpath(destination) : destination
         any(path -> real_destination == (ispath(path) ? realpath(path) : path), protected) &&
-            throw(ArgumentError("output cannot replace a source manifest, config, or results file"))
+            throw(ArgumentError("output cannot replace a source manifest, config, log, or results file"))
         islink(destination) && throw(ArgumentError("output must not be a symlink"))
         if ispath(destination)
             isfile(destination) || throw(ArgumentError("output must be a regular file"))
@@ -206,6 +216,9 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     end
 
     table = DataFrames.DataFrame(manifest; copycols=true)
+    for column in status_columns
+        table[!, column] = statuses[!, column]
+    end
     for observable in selected
         table[!, observable] = Union{Missing,Dict{String,Any}}[missing for _ in 1:DataFrames.nrow(table)]
     end
@@ -213,6 +226,7 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
         expected_blocks = row["run.blocks"]
         expected_blocks isa Integer && !(expected_blocks isa Bool) && expected_blocks > 0 ||
             throw(ArgumentError("run.blocks must be a positive integer in manifest row $i"))
+        statuses.completed_blocks[i] >= 1 || continue
         if !(row.output_file isa AbstractString) || isempty(strip(row.output_file))
             @warn "No results path; leaving selected observable cells missing" manifest_row=i
             continue

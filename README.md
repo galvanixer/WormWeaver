@@ -345,7 +345,21 @@ table = JLD2.load(joinpath(study_dir, "aggregated.jld2"), "aggregate")
 `"Density"`, `"Energy"`, `"Windings"`, `"ParticlesHistogram"`, and
 `"SingleParticleGreenFunction"`. All five are
 selected by default. Each selected observable adds a dictionary column.
-Existing manifest columns with selected observable names are rejected.
+The table also includes `status`, `failed`, and `completed_blocks` from
+`study_status`. The manifest must contain `simulation`, `config`, `output_file`,
+and `run.blocks`. Existing manifest columns with selected observable names or
+these status column names are rejected.
+
+Aggregation first checks the logs using `study_status` and skips simulations
+with zero completed production blocks. Every simulation retains its manifest
+row; skipped runs have missing observable summaries. Missing logs count as zero
+completed blocks. Failed runs with saved
+production blocks can still contribute, with `failed=true` retained.
+For eligible runs, all valid available blocks are aggregated, including partial
+histories. Each observable's `nblocks` gives its actual saved block count;
+`completed_blocks` reflects the log, which can lag behind HDF5 writes.
+`min_blocks` controls additional blocking levels, not the minimum history length
+for aggregation. A one-block history retains its mean with a NaN uncertainty.
 
 - `Density` contains `densityBySpecies`, `particleNumberBySpecies`, and
   `totalParticleNumber`, plus `species` labels when present.
@@ -632,12 +646,13 @@ covariance; use directly aggregated totals and saved squares for their errors.
 The function returns the DataFrame and saves `aggregated.jld2` in the study
 directory. Use `output=nothing` to only return the table, or specify another
 output path (relative to the study directory unless absolute). Existing output
-files require `overwrite=true`; source manifests, configs, and results are
+files require `overwrite=true`; source manifests, configs, logs, and results are
 protected from replacement.
 
-Missing results, absent selected groups, and observable histories with fewer
-blocks than `run.blocks` retain their manifest rows with missing cells and
-warnings. Complete observables in the same simulation still contribute. Malformed
+Missing results, absent selected groups, and empty observable histories retain
+their manifest rows with missing cells and warnings. Nonempty partial histories
+are summarized using their saved blocks. Other observables in the same simulation
+still contribute. Malformed
 measurements, invalid sample counts, excess blocks, and missing required fields
 raise errors. Density, energy, and windings accept files without reduction metadata
 as legacy block means. Particle histograms require explicit `sum` reduction

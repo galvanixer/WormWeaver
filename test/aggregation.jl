@@ -1,5 +1,28 @@
 import HDF5
 import Measurements
+import DataFrames
+import JLD2
+
+# Statistical fixtures also need the manifest paths and production log used by
+# the status precheck. Tests of specific statuses write their own logs instead.
+function write_aggregation_manifest(path; manifest)
+    n = DataFrames.nrow(manifest)
+    if !hasproperty(manifest, :simulation)
+        manifest.simulation = ["sim$i" for i in 1:n]
+    end
+    if !hasproperty(manifest, :config)
+        manifest.config = [joinpath("sim$i", "config.yaml") for i in 1:n]
+    end
+    for row in eachrow(manifest)
+        folder = dirname(joinpath(dirname(path), row.config))
+        mkpath(folder)
+        target = row["run.blocks"]
+        blocks = target isa Integer && !(target isa Bool) && target > 0 ? target : 1
+        write(joinpath(folder, "simulation.log"),
+              "PRODUCTION\n  Blocks $blocks\n  $blocks/$blocks 100% 0.001s\n")
+    end
+    JLD2.jldsave(path; manifest)
+end
 
 @testset "Repeated blocking statistics" begin
     # Long correlated stretches: larger blocks must increase the reported error.
@@ -81,7 +104,7 @@ end
 
 function write_combined_fixture(path; density_blocks=4, nspecies=2,
                                 groups=("Density", "Energy", "Windings", "ParticlesHistogram"),
-                                legacy=false, histogram_blocks=4)
+                                legacy=false, histogram_blocks=4, energy_blocks=4, winding_blocks=4)
     mkpath(dirname(path))
     HDF5.h5open(path, "w") do file
         HDF5.create_group(file, "observables")
@@ -95,27 +118,28 @@ function write_combined_fixture(path; density_blocks=4, nspecies=2,
             ), fill(1000, density_blocks); metadata=(species=[1, 2],), reduction)
         end
         if "Energy" in groups
-            history = [0.0, 1, 3, 5]
+            history = [0.0, 1, 3, 5][1:energy_blocks]
             write_observable_fixture(file, "Energy", (
                 diagonalEnergy=2 .* history, diagonalEnergyPerSite=2 .* history ./ 64,
                 kineticEnergy=-history, kineticEnergyPerSite=-history ./ 64,
                 totalEnergy=history, totalEnergyPerSite=history ./ 64,
-            ), [1, 3, 2, 4]; reduction)
+            ), [1, 3, 2, 4][1:energy_blocks]; reduction)
         end
         if "Windings" in groups
             history = zeros(nspecies, 2, 4)
             history[1, 1, 4] = 4
             nspecies == 2 && (history[2, 1, 4] = -4)
+            history = history[:, :, 1:winding_blocks]
             total = dropdims(sum(history; dims=1); dims=1)
             fields = (
                 windingBySpecies=history, squaredWindingBySpecies=history .^ 2,
                 totalWinding=total, squaredTotalWinding=total .^ 2,
             )
             if nspecies == 2
-                correlation = reshape(history[1, :, :] .* history[2, :, :], 1, 2, 4)
+                correlation = reshape(history[1, :, :] .* history[2, :, :], 1, 2, winding_blocks)
                 fields = (; fields..., windingCorrelationBySpecies=correlation)
             end
-            write_observable_fixture(file, "Windings", fields, fill(1000, 4);
+            write_observable_fixture(file, "Windings", fields, fill(1000, winding_blocks);
                 metadata=(periodic_axes=[true, false],
                           species_pairs=nspecies == 2 ? reshape([1, 2], 1, 2) : zeros(Int, 0, 2)),
                 reduction)
@@ -133,14 +157,14 @@ end
         manifest = DataFrames.DataFrame(output_file=["results.h5"], config=["config.yaml"], replica=[1])
         manifest[!, "run.blocks"] = [4]
         manifest_path = joinpath(root, "manifest.jld2")
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         write(joinpath(root, "config.yaml"), "original config")
         write(joinpath(root, "manifest.csv"), "original manifest")
         sources = [path, manifest_path, joinpath(root, "config.yaml"), joinpath(root, "manifest.csv")]
         original_bytes = read.(sources)
 
         table = aggregate(root; min_blocks=2)
-        @test names(table) == [names(manifest); ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"]]
+        @test names(table) == [names(manifest); ["status", "failed", "completed_blocks"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"]]
         @test ismissing(table.SingleParticleGreenFunction[1])
         @test isequal(table[:, names(manifest)], manifest)
         @test table.Density[1]["species"] == [1, 2]
@@ -185,10 +209,10 @@ end
         @test_throws ArgumentError aggregate(root)
         @test isequal(aggregate(root; min_blocks=2, overwrite=true), table)
         subset = aggregate(root; observables=("Windings", "Energy"), output=nothing)
-        @test names(subset) == [names(manifest); ["Windings", "Energy"]]
+        @test names(subset) == [names(manifest); ["status", "failed", "completed_blocks"]; ["Windings", "Energy"]]
         custom_output = joinpath(root, "nested", "custom.jld2")
         aggregate(root; observables=["Energy"], output=custom_output)
-        @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["Energy"]]
+        @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["status", "failed", "completed_blocks"]; ["Energy"]]
         for source in sources
             @test_throws ArgumentError aggregate(root; output=source, overwrite=true)
         end
@@ -205,16 +229,17 @@ end
         end
         @test_throws ArgumentError aggregate(root; min_blocks=1, output=nothing)
         manifest[!, "Energy"] = [missing]
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         @test_throws ArgumentError aggregate(root; output=nothing)
         @test "Density" in names(aggregate(root; observables=["Density"], output=nothing))
         DataFrames.select!(manifest, DataFrames.Not("Energy"))
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
 
-        # Incompleteness is specific to each observable, not the entire file.
+        # Each observable uses its own available blocks, regardless of the log.
         write_combined_fixture(path; density_blocks=2)
-        partial = @test_logs (:warn, r"Density run is incomplete") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
-        @test ismissing(partial.Density[1])
+        partial = @test_logs (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
+        @test partial.Density[1]["nblocks"] == 2
+        @test Measurements.value.(partial.Density[1]["densityBySpecies"]) == [0, 1]
         @test !ismissing(partial.Energy[1])
         @test !ismissing(partial.Windings[1])
         @test !ismissing(partial.ParticlesHistogram[1])
@@ -226,14 +251,14 @@ end
 
         missing_manifest = DataFrames.DataFrame(output_file=[missing, "missing.h5"])
         missing_manifest[!, "run.blocks"] = [4, 4]
-        JLD2.jldsave(manifest_path; manifest=missing_manifest)
+        write_aggregation_manifest(manifest_path; manifest=missing_manifest)
         absent_files = @test_logs (:warn, r"No results path") (:warn, r"Results file is missing") aggregate(root; output=nothing)
         @test DataFrames.nrow(absent_files) == 2
         @test all(ismissing, absent_files.Density)
         @test all(ismissing, absent_files.Energy)
         @test all(ismissing, absent_files.Windings)
         @test all(ismissing, absent_files.ParticlesHistogram)
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
 
         write_combined_fixture(path; nspecies=1, legacy=true)
         single = aggregate(root; output=nothing).Windings[1]
@@ -260,11 +285,11 @@ end
         manifest = DataFrames.DataFrame(output_file=["results.h5", "single.h5"], replica=[1, 2])
         manifest[!, "run.blocks"] = [4, 4]
         manifest_path = joinpath(root, "manifest.jld2")
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         before = read.([path, single_path, manifest_path])
 
         table = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true)
-        @test names(table) == [names(manifest); ["ParticlesHistogram"]]
+        @test names(table) == [names(manifest); ["status", "failed", "completed_blocks"]; ["ParticlesHistogram"]]
         @test isequal(table[:, names(manifest)], manifest)
         @test DataFrames.nrow(table) == 2  # Replicas remain separate rows.
         histogram = table.ParticlesHistogram[1]
@@ -349,12 +374,13 @@ end
         @test flattened.meanSquaredTotalParticleNumber[1] === histogram["meanSquaredTotalParticleNumber"]
 
         write_combined_fixture(path; histogram_blocks=2)
-        partial = @test_logs (:warn, r"ParticlesHistogram run is incomplete") (:warn, r"SingleParticleGreenFunction was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
-        @test ismissing(partial.ParticlesHistogram[1])
+        partial = @test_logs (:warn, r"SingleParticleGreenFunction was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
+        @test partial.ParticlesHistogram[1]["nblocks"] == 2
+        @test partial.ParticlesHistogram[1]["nsamples"] == 3
         @test !ismissing(partial.Density[1]) && !ismissing(partial.Energy[1]) && !ismissing(partial.Windings[1])
         @test !ismissing(partial.ParticlesHistogram[2])
         manifest[!, "run.blocks"] = [1, 4]
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, output=nothing)
         write_combined_fixture(path; histogram_blocks=1)
         single_block = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, output=nothing).ParticlesHistogram[1]
@@ -411,7 +437,7 @@ end
         path = joinpath(root, "results.h5")
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [64]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         first_species = vcat(zeros(Int, 32), ones(Int, 32))
         occupations = permutedims(hcat(first_species, 1 .- first_species))
         write_histogram_trajectory_fixture(path, fill(1000, 64), occupations; capacities=[1, 2])
@@ -475,7 +501,7 @@ end
         counts = collect(Int64, 1:11)
         write_histogram_trajectory_fixture(path, counts, reshape([zeros(Int, 10); 1], 1, 11); capacities=[1])
         manifest[!, "run.blocks"] = [11]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         odd = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2, output=nothing).ParticlesHistogram[1]
         @test odd["totalParticleNumberCounts"] == [55, 11]
         @test Measurements.value.(odd["totalParticleNumberProbability"]) ≈ [5/6, 1/6]
@@ -501,7 +527,7 @@ end
         counts = [Int64(2)^53 + 1, 1, 1, 1, 1]
         write_histogram_trajectory_fixture(path, counts, zeros(Int, 1, 5); capacities=[1])
         manifest[!, "run.blocks"] = [5]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         large = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2, output=nothing).ParticlesHistogram[1]
         @test large["nsamples"] === Int64(2)^53 + 5
         @test large["blocking_diagnostics"]["sample_counts"] == [Int64(2)^53 + 5, Int64(2)^53 + 4]
@@ -529,7 +555,7 @@ end
         path = joinpath(root, "results.h5")
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [4]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         for (dataset, value, expected_error) in (
             ("sampleCount", [2.0, 1, 2, 1], ArgumentError),
             ("sampleCount", [2, 0, 2, 1], ArgumentError),
@@ -622,7 +648,7 @@ end
                 max_particle_number_by_species=[0]))
         end
         manifest[!, "run.blocks"] = [2]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         @test_throws OverflowError aggregate(root; observables=["ParticlesHistogram"], output=nothing)
         # Individual bins fit, but summing bins inside a block also must be checked.
         HDF5.h5open(path, "r+") do file
@@ -692,7 +718,7 @@ end
         path = joinpath(root, "results.h5")
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [4]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         for (dataset, value, expected_error) in (
             ("sampleCount", [1, 0, 1, 1], ArgumentError),
             ("sampleCount", [1.0, 1.5, 1, 1], ArgumentError),
@@ -745,11 +771,11 @@ end
         @test_throws ArgumentError aggregate(root; output=nothing)
         write_combined_fixture(path)
         manifest[!, "run.blocks"] = [3]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         @test_throws ArgumentError aggregate(root; output=nothing)
         for expected_blocks in (0, true, 4.0, missing)
             manifest[!, "run.blocks"] = [expected_blocks]
-            JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+            write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
             @test_throws ArgumentError aggregate(root; output=nothing)
         end
     end
@@ -790,12 +816,13 @@ end
         )
         manifest[!, "run.blocks"] = fill(4, 4)
         manifest[!, "model.hopping.J"] = [[0.62, 0.62] for _ in 1:4]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         source_bytes = read(path)
-        aggregate = @test_logs (:warn, r"incomplete") (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"])
+        aggregate = @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"])
         @test DataFrames.nrow(aggregate) == 4
         @test isequal(aggregate[:, names(manifest)], manifest)
-        @test ismissing(aggregate.Density[2])
+        @test aggregate.Density[2]["nblocks"] == 2
+        @test Measurements.value.(aggregate.Density[2]["densityBySpecies"]) == [0, 1]
         @test ismissing(aggregate.Density[3])
         summary = aggregate.Density[1]
         density = summary["densityBySpecies"]
@@ -815,8 +842,8 @@ end
         @test Measurements.uncertainty.(saved.Density[1]["densityBySpecies"]) ≈ [1.0, 0.0]
         @test read(path) == source_bytes
         @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"])
-        @test_logs (:warn, r"incomplete") (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"], overwrite=true)
-        @test_logs (:warn, r"incomplete") (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"], output=nothing)
+        @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"], overwrite=true)
+        @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"], output=nothing)
         @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"], output="manifest.jld2", overwrite=true)
         @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"], output="sim1/results.h5", overwrite=true)
 
@@ -835,7 +862,7 @@ end
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [4]
         manifest_path = joinpath(root, "manifest.jld2")
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         before = read.([path, manifest_path])
         plain = aggregate(root; min_blocks=2, output=nothing)
         disabled = aggregate(root; min_blocks=2, blocking_diagnostics=false, output=nothing)
@@ -909,7 +936,7 @@ end
             end
         end
         manifest[!, "run.blocks"] = [1]
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         single_block = aggregate(root; blocking_diagnostics=true, output=nothing)
         for observable in ("Density", "Energy", "Windings", "ParticlesHistogram")
             diagnostics = single_block[1, observable]["blocking_diagnostics"]
@@ -927,7 +954,7 @@ end
         counts = collect(Int64, 1:11)
         write_density_fixture(path, reshape([zeros(10); 4.0], 1, 11), counts)
         manifest[!, "run.blocks"] = [11]
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         odd = aggregate(root; observables=["Density"], min_blocks=2, blocking_diagnostics=true, output=nothing).Density[1]
         @test Measurements.value(odd["densityBySpecies"][1]) ≈ 2/3
         @test odd["blocking_diagnostics"]["block_widths"] == [1, 2, 4]
@@ -1007,7 +1034,7 @@ end
             manifest = DataFrames.DataFrame(output_file=["windings.h5"])
             manifest[!, "run.blocks"] = [4]
             manifest_path = joinpath(root, "manifest.jld2")
-            JLD2.jldsave(manifest_path; manifest)
+            write_aggregation_manifest(manifest_path; manifest)
             before_bytes = read.([path, manifest_path])
             table = aggregate(root; observables=["Windings"], min_blocks=2,
                               blocking_diagnostics=true)

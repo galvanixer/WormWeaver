@@ -1,7 +1,7 @@
 function write_single_particle_green_fixture(path; nspecies=2, counts=[11, 23, 5, 41],
         hits=reshape(collect(1.0:(nspecies * 3 * length(counts))), nspecies, 3, length(counts)),
         zcounts=Float64.(1:length(counts)), species=collect(1:nspecies),
-        metadata=(;), reduction="sum")
+        metadata=(;), reduction="sum", append=false)
     md = merge((;
         species, displacements=reshape([0, 1, -1], 3, 1),
         displacement_vectors=reshape([0.0, 1, -1], 3, 1),
@@ -9,9 +9,11 @@ function write_single_particle_green_fixture(path; nspecies=2, counts=[11, 23, 5
         equal_time_convention="one-sided inclusive window",
         production_log_eta=collect(1.0:nspecies),
     ), metadata)
-    HDF5.h5open(path, "w") do file
-        HDF5.create_group(file, "observables")
-        HDF5.create_group(file, "observables/METADATA")
+    HDF5.h5open(path, append ? "r+" : "w") do file
+        if !append
+            HDF5.create_group(file, "observables")
+            HDF5.create_group(file, "observables/METADATA")
+        end
         write_observable_fixture(file, "SingleParticleGreenFunction",
             (; gREqualTimeHits=hits, zSectorVisitCount=zcounts), counts; metadata=md, reduction)
         # Deliberately unusable derived data must not be consulted by raw aggregation.
@@ -26,7 +28,7 @@ end
         path = joinpath(root, "results.h5")
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [3]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         write_single_particle_green_fixture(path; nspecies=1, counts=[7, 11, 9],
             hits=reshape([2.0, 8, 10], 1, 1, 3), zcounts=[1.0, 2, 1],
             metadata=(displacements=zeros(Int, 1, 1), displacement_vectors=zeros(1, 1),
@@ -99,7 +101,7 @@ end
         @test Measurements.value.(unequal["grEqualTime"]) ≈ [4.0 8.0 8.0]
 
         manifest[!, "run.blocks"] = [1]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         write_single_particle_green_fixture(path; nspecies=1, counts=[2], zcounts=[1])
         one = aggregate(root; observables=["SingleParticleGreenFunction"], output=nothing).SingleParticleGreenFunction[1]
         @test all(isnan, Measurements.uncertainty.(one["grEqualTime"]))
@@ -113,12 +115,12 @@ end
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [4]
         manifest_path = joinpath(root, "manifest.jld2")
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         fixture = write_single_particle_green_fixture(path; species=[4, 2])
         source_bytes = read.([path, manifest_path])
         table = aggregate(root; observables=["SingleParticleGreenFunction"])
         summary = table.SingleParticleGreenFunction[1]
-        @test names(table) == [names(manifest); ["SingleParticleGreenFunction"]]
+        @test names(table) == [names(manifest); ["status", "failed", "completed_blocks"]; ["SingleParticleGreenFunction"]]
         @test summary["gREqualTimeHits"] == dropdims(sum(fixture.hits; dims=3); dims=3)
         @test size(summary["gREqualTimeHits"]) == (2, 3)
         @test eltype(summary["gREqualTimeHits"]) == Float64
@@ -161,7 +163,7 @@ end
         for nspecies in 1:3, nblocks in (1, 4)
             counts = collect(1:nblocks)
             manifest[!, "run.blocks"] = [nblocks]
-            JLD2.jldsave(manifest_path; manifest)
+            write_aggregation_manifest(manifest_path; manifest)
             fixture = write_single_particle_green_fixture(path; nspecies, counts,
                 species=reverse(collect(1:nspecies)), zcounts=ones(nblocks))
             result = aggregate(root; observables=["SingleParticleGreenFunction"], output=nothing).SingleParticleGreenFunction[1]
@@ -174,7 +176,7 @@ end
         end
         write_single_particle_green_fixture(path; hits=zeros(2, 3, 4), zcounts=zeros(4))
         manifest[!, "run.blocks"] = [4]
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         @test_throws ArgumentError aggregate(root; observables=["SingleParticleGreenFunction"], output=nothing)
 
         write_single_particle_green_fixture(path; counts=[Int64(2)^53 + 1, 1, 1, 1])
@@ -182,9 +184,10 @@ end
         @test large["sampleCount"] == Int64(2)^53 + 4
 
         write_single_particle_green_fixture(path; counts=[11, 23])
-        partial = @test_logs (:warn, r"SingleParticleGreenFunction run is incomplete") aggregate(
+        partial = aggregate(
             root; observables=["SingleParticleGreenFunction"], output=nothing)
-        @test ismissing(partial.SingleParticleGreenFunction[1])
+        @test partial.SingleParticleGreenFunction[1]["nblocks"] == 2
+        @test partial.SingleParticleGreenFunction[1]["sampleCount"] == 34
         write_combined_fixture(path)
         absent = @test_logs (:warn, r"SingleParticleGreenFunction was not found") aggregate(
             root; observables=["SingleParticleGreenFunction"], output=nothing)
@@ -192,7 +195,7 @@ end
         @test ismissing(aggregate(root; output=nothing).SingleParticleGreenFunction[1])
 
         manifest.output_file = ["missing.h5"]
-        JLD2.jldsave(manifest_path; manifest)
+        write_aggregation_manifest(manifest_path; manifest)
         missing_file = @test_logs (:warn, r"Results file is missing") aggregate(
             root; observables=["SingleParticleGreenFunction"], output=nothing)
         @test ismissing(missing_file.SingleParticleGreenFunction[1])
@@ -204,7 +207,7 @@ end
         path = joinpath(root, "results.h5")
         manifest = DataFrames.DataFrame(output_file=["results.h5"])
         manifest[!, "run.blocks"] = [4]
-        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         read_summary() = aggregate(root; observables=["SingleParticleGreenFunction"], output=nothing)
         cases = (
             ((; hits=ones(2, 3)), DimensionMismatch),
