@@ -37,7 +37,7 @@ model:
     seed: 0  # RNG seed for the disorder realization.
     distribution: uniform  # Disorder distribution: uniform or normal.
 
-# Worldline representation, initialization, and restart settings.
+# Worldline representation and initialization settings.
 # `density` is given as exact rationals using explicit numerator/denominator pairs.
 # `maxocc` is the local occupation cutoff per species.
 worldlines:
@@ -45,8 +45,7 @@ worldlines:
     - {num: 0, den: 16}  # Species 1 target initialization density.
     - {num: 0, den: 16}  # Species 2 target initialization density.
   maxocc: [3, 3]  # Local occupation cutoff per species.
-  restartfile: null  # Optional worldline restart file.
-  init_seed: 14061990  # RNG seed for worldline initialization / restart handling.
+  init_seed: 14061990  # RNG seed for worldline initialization.
 
 # Monte Carlo sampler configuration.
 # This block controls the multiworm sampling scheme and move scheduling.
@@ -171,3 +170,4 @@ run:
   burnin_blocks: 10
   seed: 14061990
   output_file: results.h5
+  checkpoint_file: checkpoint.jls
