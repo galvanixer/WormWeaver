@@ -16,9 +16,9 @@ include("templates.jl")
 
 export generate_study
 
-const DEFAULT_TEMPLATE = joinpath(CONFIG_TEMPLATE_DIR, "config.yaml")
+const DEFAULT_TEMPLATE = "config.yaml"
 
-const MANIFEST_METADATA = ("project", "study_id", "simulation", "replica", "config", "output_file", "config_sha256")
+const MANIFEST_METADATA = ("project", "study_id", "template", "simulation", "replica", "config", "output_file", "config_sha256")
 const CORE_FIELDS = [
     "system.beta", "system.ensemble", "lattice.geometry", "lattice.extent", "lattice.pbc",
     "model.family", "model.nspecies", "model.hopping.kind", "model.hopping.J",
@@ -97,8 +97,9 @@ Generate `sim1/config.yaml`, etc. from a study YAML file. Relative paths are
 resolved against the study file. A nonblank `project` string is required and
 stored in the study snapshot and manifest, not in simulation configs.
 Writes a native DataFrame under the `manifest` key in `manifest.jld2`, plus
-`manifest.csv` with structured values serialized as YAML cells. Each study also
-includes `jobfile` and all bundled `.slurm` launchers.
+`manifest.csv` with structured values serialized as YAML cells. The `template`
+column records the bundled name (including its group) or absolute custom path.
+Each study also includes `jobfile` and all bundled `.slurm` launchers.
 Ordinary sweep paths are sorted alphabetically. `correlated_sweeps` is a list
 of nonempty field mappings whose equal-length value lists advance together.
 These groups follow ordinary sweep paths in their listed order; independent
@@ -145,8 +146,10 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
         throw(ArgumentError("template must be a nonempty filename or path"))
     if is_bundled_template_reference(template_path)
         template_path = resolve_bundled_template(template_path)
+        template_name = relpath(template_path, CONFIG_TEMPLATE_DIR)
     else
         template_path = resolve(template_path)
+        template_name = template_path
     end
     template_text = read(template_path, String)
     template = mapping(YAML.load(template_text), "Template")
@@ -265,6 +268,7 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     manifest = DataFrames.DataFrame(
         project=fill(project, length(configs)),
         study_id=fill(study_id, length(configs)),
+        template=fill(template_name, length(configs)),
         simulation=simulations,
         replica=replica_numbers,
         config=["$simulation/config.yaml" for simulation in simulations],

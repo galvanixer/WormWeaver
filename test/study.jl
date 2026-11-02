@@ -37,6 +37,7 @@ import DataFrames
         @test !("simulation_id" in names(native))
         @test !("simulation_id" in names(table))
         @test native.config_sha256 == table.config_sha256
+        @test native.template == table.template == fill(template, 6)
         @test native[1, "run.seed"] isa Integer
         @test native[1, "system.beta"] isa AbstractFloat
         @test all(ismissing, native[!, "lattice.extent"])
@@ -97,6 +98,7 @@ import DataFrames
               YAML.load_file(joinpath(@__DIR__, "..", "templates", "multiwormqmc", "config.yaml"))
         bundled_manifest = CSV.read(joinpath(bundled, "manifest.csv"), DataFrames.DataFrame)
         @test bundled_manifest.project == ["LRBHQM"]
+        @test bundled_manifest.template == ["config.yaml"]
         @test bundled_manifest.output_file == ["sim1/results.h5"]
         @test bundled_manifest[1, "model.family"] == "bose_hubbard"
         @test YAML.load(String(bundled_manifest[1, "model.onsite.U"])) == [[4.0, 1.5], [1.5, 5.0]]
@@ -104,6 +106,7 @@ import DataFrames
               [Dict("num" => 2, "den" => 16), Dict("num" => 2, "den" => 16)]
         @test !("sampler.moves" in names(bundled_manifest))
         native_bundled = JLD2.load(joinpath(bundled, "manifest.jld2"), "manifest")
+        @test native_bundled.template == bundled_manifest.template
         bundled_config = YAML.load_file(joinpath(bundled, "sim1", "config.yaml"))
         for (field, value) in (
             "model.onsite.U" => bundled_config["model"]["onsite"]["U"],
@@ -579,11 +582,16 @@ end
             bundled = joinpath(@__DIR__, "..", "templates", "multiwormqmc", relative)
             @test read(joinpath(output, "template.yaml")) == read(bundled)
             @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == YAML.load_file(bundled)
+            @test CSV.read(joinpath(output, "manifest.csv"), DataFrames.DataFrame).template == [relative]
+            @test JLD2.load(joinpath(output, "manifest.jld2"), "manifest").template == [relative]
         end
         for (i, template) in enumerate(("./config_LRBHQM_regular.yaml", joinpath(root, "config_LRBHQM_regular.yaml")))
             YAML.write_file(source, Dict("append_date" => false, "project" => "local", "output_dir" => "local$i", "template" => template))
             output = generate_study(source)
             @test YAML.load_file(joinpath(output, "sim1", "config.yaml")) == local_config
+            expected = [joinpath(root, "config_LRBHQM_regular.yaml")]
+            @test CSV.read(joinpath(output, "manifest.csv"), DataFrames.DataFrame).template == expected
+            @test JLD2.load(joinpath(output, "manifest.jld2"), "manifest").template == expected
         end
         YAML.write_file(joinpath(root, "custom.yaml"), local_config)
         YAML.write_file(source, Dict("append_date" => false, "project" => "bad", "output_dir" => "bad", "template" => "custom.yaml"))
