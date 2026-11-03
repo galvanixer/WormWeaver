@@ -1,4 +1,3 @@
-import CSV
 import Dates
 import DataFrames
 import JLD2
@@ -19,8 +18,17 @@ requires a success summary. A failure retains its stage and sets `failed=true`.
 Unreadable files raise an error. No files are modified.
 """
 function study_log_status(path::AbstractString)
-    isfile(path) || return (; status="No Log File", completed_blocks=0, failed=false)
-    return open(study_log_status, path)
+    try
+        (ispath(path) || islink(path)) && !isfile(path) &&
+            throw(ArgumentError("log is not a regular file: $path"))
+        return open(study_log_status, path)
+    catch err
+        # Opening distinguishes a missing log from an inaccessible parent.
+        if err isa SystemError && err.errnum == Base.Libc.ENOENT && !islink(path)
+            return (; status="No Log File", completed_blocks=0, failed=false)
+        end
+        rethrow()
+    end
 end
 
 # Parse from the stream's current position; ownership stays with the caller.
@@ -70,12 +78,12 @@ function study_log_status(io::IO)
 end
 
 """
-    study_status(root) -> DataFrame
+    study_status(root; arrayid=nothing, scratch_root="/scratch", manifest=nothing) -> DataFrame
 
-Read `manifest.jld2` (or `manifest.csv` if absent) and scan each simulation's
+Read `manifest.jld2` and scan each simulation's
 `simulation.log`, located beside its manifest `config` path. Return columns
 `study_id`, `simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`,
-and `failed`, in manifest order. The manifest's `study_id` and `simulation`
+`failed`, and `log_source`, in manifest order. The manifest's `study_id` and `simulation`
 together identify a simulation across generated studies. Lattice sizes remain
 arrays, including for a 1D lattice.
 
@@ -91,41 +99,64 @@ beta values are `missing`.
 Unreadable logs raise an error. This read-only snapshot does not determine
 whether a process is currently running; `failed=false` only means no explicit
 failure was found in the log. Results and checkpoint files are not opened.
+
+With `arrayid`, use `find_scratch_logs` to locate logs on running allocations
+of that array, preferring a unique scratch log for each simulation. Otherwise
+read the study-directory log. Multiple scratch matches and read failures raise
+errors. A task ID such as `"18523211_2"` inspects the whole array. Without
+`arrayid`, only study-directory logs are read and Slurm is not called.
+
+`log_source` is `"scratch"` for a log read from a compute node, `"local"` for
+a study-directory log, or `"none"` when no log was found. A local fallback
+describes that log's progress and is not proof of the current scratch attempt.
+Callers that already loaded the JLD2 manifest can pass it through `manifest`
+to reuse that snapshot. CSV manifests are not read.
 """
-function study_status(root::AbstractString)
+function study_status(root::AbstractString; arrayid=nothing,
+                      scratch_root::AbstractString="/scratch", manifest=nothing)
     root = abspath(root)
-    return _study_status(root, _read_study_manifest(root))
-end
-
-function _read_study_manifest(root::AbstractString)
-    native = joinpath(root, "manifest.jld2")
-    csv = joinpath(root, "manifest.csv")
-    return if isfile(native)
-        JLD2.load(native, "manifest")
-    elseif isfile(csv)
-        CSV.read(csv, DataFrames.DataFrame)
-    else
-        throw(ArgumentError("no manifest.jld2 or manifest.csv found in $root"))
+    if manifest === nothing
+        path = joinpath(root, "manifest.jld2")
+        isfile(path) || throw(ArgumentError("no manifest.jld2 found in $root"))
+        manifest = JLD2.load(path, "manifest")
     end
-end
-
-# Reuse the manifest snapshot already loaded by aggregation.
-function _study_status(root::AbstractString, manifest)
     manifest isa DataFrames.AbstractDataFrame ||
         throw(ArgumentError("manifest must be a DataFrame"))
     all(name -> name in names(manifest), ("simulation", "config")) ||
         throw(ArgumentError("manifest must contain simulation and config"))
 
-    table = DataFrames.DataFrame(study_id=Union{Missing,String}[], simulation=String[],
-                                lattice_size=Any[], beta=Any[],
-                                status=String[], completed_blocks=Int[], failed=Bool[])
     for row in eachrow(manifest)
         row.simulation isa AbstractString && !isempty(strip(row.simulation)) &&
             row.config isa AbstractString &&
             !isempty(strip(row.config)) ||
             throw(ArgumentError("each manifest row must have a simulation name and config path"))
+    end
+
+    scratch_logs = Dict{String,NamedTuple}()
+    if arrayid !== nothing
+        for log in eachrow(find_scratch_logs(root, arrayid; scratch_root, manifest))
+            if haskey(scratch_logs, log.simulation)
+                previous = scratch_logs[log.simulation]
+                throw(ArgumentError("multiple scratch logs for $(log.simulation): " *
+                                    "$(previous.node):$(previous.log_path), $(log.node):$(log.log_path)"))
+            end
+            scratch_logs[log.simulation] = NamedTuple(log)
+        end
+    end
+
+    table = DataFrames.DataFrame(study_id=Union{Missing,String}[], simulation=String[],
+                                lattice_size=Any[], beta=Any[], status=String[],
+                                completed_blocks=Int[], failed=Bool[], log_source=String[])
+    for row in eachrow(manifest)
         folder = dirname(joinpath(root, row.config))
-        progress = study_log_status(joinpath(folder, "simulation.log"))
+        if haskey(scratch_logs, row.simulation)
+            text = read_scratch_log(scratch_logs[row.simulation])
+            progress = study_log_status(IOBuffer(text))
+            log_source = "scratch"
+        else
+            progress = study_log_status(joinpath(folder, "simulation.log"))
+            log_source = progress.status == "No Log File" ? "none" : "local"
+        end
         study_id = hasproperty(row, :study_id) ? something(row.study_id, missing) : missing
         lattice_size = hasproperty(row, Symbol("lattice.extent")) ?
             something(row["lattice.extent"], missing) : missing
@@ -134,7 +165,8 @@ function _study_status(root::AbstractString, manifest)
         if lattice_size isa AbstractString
             lattice_size = YAML.load(String(lattice_size))
         end
-        push!(table, (; study_id, simulation=String(row.simulation), lattice_size, beta, progress...))
+        push!(table, (; study_id, simulation=String(row.simulation), lattice_size, beta,
+                      progress..., log_source))
     end
     return table
 end
@@ -145,7 +177,7 @@ end
 Read the study manifest and current simulation logs, then return all manifest
 columns with refreshed `status`, `completed_blocks`, and `failed` columns.
 Join on `(study_id, simulation)`, requiring nonblank study IDs and unique keys,
-and preserve manifest row order. Prefer `manifest.jld2`, falling back to CSV.
+and preserve manifest row order. Read only `manifest.jld2`.
 
 By default, no files are written. With `save=true`, also write
 `manifest_status_yyyymmdd_HHMMSS_sssZ.jld2` in the study directory. The timestamp
@@ -158,8 +190,10 @@ This is a log-progress snapshot, not a running-process or failure-cause check.
 function status_manifest(root::AbstractString; save::Bool=false)
     root = abspath(root)
     captured_at_utc = Dates.now(Dates.UTC)
-    manifest = _read_study_manifest(root)
-    statuses = _study_status(root, manifest)
+    path = joinpath(root, "manifest.jld2")
+    isfile(path) || throw(ArgumentError("no manifest.jld2 found in $root"))
+    manifest = JLD2.load(path, "manifest")
+    statuses = study_status(root; manifest)
     hasproperty(manifest, :study_id) &&
         all(id -> id isa AbstractString && !isempty(strip(id)), manifest.study_id) ||
         throw(ArgumentError("manifest must contain a nonblank study_id for every simulation"))

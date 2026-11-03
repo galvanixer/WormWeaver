@@ -188,11 +188,13 @@ Metadata column names (`project`, `study_id`, `template`, `simulation`, `replica
 
 ```julia
 statuses = study_status(study_dir)
+# Include compute-node scratch logs for a running array:
+statuses = study_status(study_dir; arrayid=18523211, scratch_root="/scratch")
 ```
 
-Reads the typed manifest (falling back to CSV) and each simulation's log, returning
+Reads `manifest.jld2` and each simulation's log, returning
 `study_id`, `simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`,
-and `failed`. Join with the manifest using `on=[:study_id, :simulation]` to
+`failed`, and `log_source`. Join with the manifest using `on=[:study_id, :simulation]` to
 identify simulations across generated studies. For older or custom manifests
 without a study ID, `study_id` is `missing`.
 Lattice sizes remain arrays, such as `[64]` or `[16, 16]`.
@@ -204,6 +206,16 @@ Checkpoint stages reflect saved checkpoints; `Finished` requires a success summa
 Failures retain their last stage with `failed=true`;
 `failed=false` does not establish that a process is running. This function only
 reads the files and does not modify the manifest, logs, or simulation outputs.
+
+With `arrayid`, a unique scratch log takes precedence for each simulation;
+otherwise its study-directory log is used. `log_source` is `"scratch"`,
+`"local"`, or `"none"` when no log exists (`status="No Log File"`). Multiple
+scratch matches and read failures raise errors. Without `arrayid`, only local
+logs are read and Slurm is not called. Existing result columns and manifest
+order are preserved, with `log_source` appended in both modes. A local fallback
+reports that log's progress and may not reflect a newer scratch attempt.
+CSV manifests are not read. Callers that already loaded the JLD2 manifest can
+pass `manifest=manifest` to reuse it without another file read.
 
 Use `study_log_status("/path/to/simulation.log")` to parse a single local log,
 or `study_log_status(IOBuffer(text))` to parse log text returned by
@@ -233,7 +245,7 @@ in the study directory. The filename timestamp and stored `captured_at_utc`
 capture-start time use UTC. All manifest parameters are preserved, with
 `status`, `completed_blocks`, and `failed` added or refreshed by joining on
 `(study_id, simulation)`. Keys must be unique and study IDs nonblank.
-The function prefers the native manifest, falls back to CSV, and always returns
+The function reads only `manifest.jld2` and always returns
 the joined DataFrame. Original files and earlier snapshots are not changed;
 a filename collision raises an error. Compare snapshots to inspect progress
 over time, then use each row's `config` directory to locate `simulation.log`

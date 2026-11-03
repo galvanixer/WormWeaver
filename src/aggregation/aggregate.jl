@@ -194,7 +194,7 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     status_columns = ["status", "failed", "completed_blocks"]
     any(name -> name in names(manifest), [selected; status_columns]) &&
         throw(ArgumentError("manifest already contains a selected observable or status column"))
-    statuses = _study_status(root, manifest)
+    statuses = study_status(root; manifest)
     destination = output === nothing ? nothing : normpath(joinpath(root, output))
     if destination !== nothing
         isempty(strip(output)) && throw(ArgumentError("output must be a nonempty path"))

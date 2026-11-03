@@ -121,6 +121,11 @@ end
                                         config=["sim1/config.yaml"])
         CSV.write(joinpath(root, "manifest.csv"), manifest)
         existing = readdir(root)
+        @test_throws ArgumentError status_manifest(root)
+        @test_throws ArgumentError status_manifest(root; save=true)
+        @test readdir(root) == existing
+        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        existing = readdir(root)
         table = status_manifest(root)
         @test readdir(root) == existing
         @test isequal(table[:, names(manifest)], manifest)
@@ -168,7 +173,7 @@ end
         sources = [path; [joinpath(root, "job$i", "simulation.log") for i in 2:length(logs)]]
         original = read.(sources)
         table = study_status(root)
-        @test names(table) == ["study_id", "simulation", "lattice_size", "beta", "status", "completed_blocks", "failed"]
+        @test names(table) == ["study_id", "simulation", "lattice_size", "beta", "status", "completed_blocks", "failed", "log_source"]
         @test table.study_id == manifest.study_id
         @test table.simulation == manifest.simulation
         @test table.lattice_size == fill([64], length(logs))
@@ -178,6 +183,7 @@ end
                                "Checkpoint 3", "Checkpoint 4", "Finished", "Tuning", "Checkpoint 4"]
         @test table.completed_blocks == [0, 0, 0, 0, 25, 48, 50, 75, 100, 100, 0, 100]
         @test table.failed == [falses(10); true; true]
+        @test table.log_source == ["none"; fill("local", length(logs) - 1)]
         @test read.(sources) == original
 
         # Scratch log text uses the same rules as every local-file fixture.
@@ -228,13 +234,15 @@ end
         manifest[!, "lattice.extent"] = ["- 16\n- 16"]
         manifest[!, "system.beta"] = [8.0]
         CSV.write(joinpath(root, "manifest.csv"), manifest)
+        @test_throws ArgumentError study_status(root)
+        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
         table = study_status(root)
         @test table.study_id == manifest.study_id
         @test table.lattice_size == [[16, 16]]
         @test table.beta == [8.0]
         @test table.status == ["No Log File"]
 
-        # The typed manifest takes precedence; optional metadata may be absent.
+        # Optional metadata may be absent from the JLD2 manifest.
         DataFrames.select!(manifest, :simulation, :config)
         JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
         @test ismissing(study_status(root).study_id[1])

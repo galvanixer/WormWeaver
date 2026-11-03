@@ -160,9 +160,12 @@ end
             JLD2.jldsave(native; manifest=DataFrames.DataFrame(config=["sim1/config.yaml"]))
             @test_throws ArgumentError find_scratch_logs(study, 18523211; scratch_root=scratch)
 
-            # CSV fallback and a node range both exercise the real Bash check.
+            # A CSV-only study is rejected; node ranges still use the Bash check.
             rm(native)
             CSV.write(joinpath(study, "manifest.csv"), manifest)
+            @test_throws ArgumentError find_scratch_logs(study, 18523211; scratch_root=scratch)
+            @test_throws ArgumentError study_status(study; arrayid=18523211, scratch_root=scratch)
+            JLD2.jldsave(native; manifest)
             write(queue, "18523211_3|18523211|RUNNING|hpc-n[664,937]\n")
             expanded = find_scratch_logs(study, 18523211; scratch_root=scratch)
             @test expanded.simulation == ["sim41", "sim41"]
@@ -174,6 +177,69 @@ end
             @test DataFrames.nrow(empty) == 0
             @test names(empty) == names(table)
             @test count(startswith("srun|"), readlines(calls)) == before
+
+            @testset "Study status with scratch sources" begin
+                # Restore a running queue and use distinct local config folders.
+                write(queue, "18523211_3|18523211|RUNNING|hpc-n937\n" *
+                             "18523211_2|18523213|RUNNING|hpc-n664\n")
+                status_manifest_fixture = copy(manifest[1:4, :])
+                status_manifest_fixture.config = ["home$i/config.yaml" for i in 1:4]
+                push!(status_manifest_fixture, ("sim99", "home99/config.yaml"))
+                JLD2.jldsave(native; manifest=status_manifest_fixture)
+                # Duplicate locations are rejected even if a local log exists.
+                @test_throws ArgumentError study_status(study; arrayid=18523211, scratch_root=scratch)
+                rm(paths[4])
+                write(paths[1], "PRODUCTION\n  50/100 50% 1s ◆\n")
+                write(paths[2], "TUNING\nSimulation failed: exhausted\n")
+                for home in ("home1", "home2")
+                    mkpath(joinpath(study, home))
+                    write(joinpath(study, home, "simulation.log"), "SUMMARY\n  Status SUCCESS\n")
+                end
+                before_files = read.([native; paths[1:3]])
+                statuses = study_status(study; arrayid="18523211_2", scratch_root=scratch)
+                @test statuses.simulation == status_manifest_fixture.simulation
+                @test statuses.status == ["Checkpoint 2", "Finished", "Tuning", "Pre Tuning", "No Log File"]
+                @test statuses.completed_blocks == [50, 0, 0, 0, 0]
+                @test statuses.failed == [false, false, true, false, false]
+                @test statuses.log_source == ["scratch", "local", "scratch", "scratch", "none"]
+                @test read.([native; paths[1:3]]) == before_files
+                @test sum(status_summary(statuses; io=devnull).n_simulations) == 5
+
+                before_calls = read(calls)
+                local_statuses = study_status(study)
+                @test local_statuses.log_source == ["local", "local", "none", "none", "none"]
+                @test read(calls) == before_calls
+                withenv("HPC_FAIL_NODE" => "hpc-n664") do
+                    @test_throws ProcessFailedException study_status(study; arrayid=18523211, scratch_root=scratch)
+                end
+                chmod(paths[2], 0o000)
+                try
+                    @test_throws ProcessFailedException study_status(study; arrayid=18523211, scratch_root=scratch)
+                finally
+                    chmod(paths[2], 0o600)
+                end
+                # Once scratch no longer has the log, the study copy is used.
+                rm(paths[1])
+                fallback = study_status(study; arrayid=18523211, scratch_root=scratch)
+                @test fallback.log_source[1] == "local"
+                @test fallback.status[1] == "Finished"
+                # A read error must not become log_source="none".
+                local_log = joinpath(study, "home1", "simulation.log")
+                chmod(local_log, 0o000)
+                try
+                    @test_throws SystemError study_status(study; arrayid=18523211, scratch_root=scratch)
+                finally
+                    chmod(local_log, 0o600)
+                end
+                # Reuse a loaded JLD2 snapshot through the public functions,
+                # including discovery, without reopening the manifest file.
+                loaded = JLD2.load(native, "manifest")
+                expected_logs = find_scratch_logs(study, 18523211; scratch_root=scratch)
+                rm(native)
+                @test isequal(find_scratch_logs(study, 18523211; scratch_root=scratch, manifest=loaded), expected_logs)
+                @test isequal(study_status(study; arrayid=18523211, scratch_root=scratch, manifest=loaded), fallback)
+                @test_throws ArgumentError study_status(study)
+            end
         end
     end
 end

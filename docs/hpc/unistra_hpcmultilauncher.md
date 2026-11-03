@@ -211,6 +211,7 @@ logs = find_scratch_logs(study_dir, "18523211_2"; scratch_root="/scratch")
 
 This returns `simulation`, `task`, `jobid`, `node`, and `log_path` in manifest
 simulation order, retaining multiple locations for the same simulation. It
+reads only `manifest.jld2`; `manifest.csv` is not a fallback. It
 checks running allocations with one `srun` per allocation and node; missing
 logs are omitted and inspection failures raise errors. It only locates files:
 log contents and simulation status are not read. Existing launcher and copying
@@ -235,6 +236,20 @@ progress = study_log_status(IOBuffer(text))
 
 This applies the same stage, checkpoint, failure, and completion rules as local
 log parsing. The file-path method continues to work as before.
+
+To obtain one status row per manifest simulation, including scratch logs:
+
+```julia
+statuses = study_status(study_dir; arrayid=18523211, scratch_root="/scratch")
+```
+
+A unique scratch log takes precedence; simulations without one use their
+study-directory log. `log_source` records `"scratch"`, `"local"`, or `"none"`
+when no log exists. Multiple scratch matches and read failures raise errors.
+An empty but existing log is still recorded as `"scratch"` or `"local"`.
+`study_status(study_dir)` reads only local logs and also includes `log_source`.
+This does not change how simulations run or copy files. `status_manifest`
+continues to use its existing local-only snapshot workflow.
 
 To inspect a log on the node while its allocation is still running:
 

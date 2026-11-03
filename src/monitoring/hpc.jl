@@ -1,4 +1,5 @@
 import DataFrames
+import JLD2
 
 """
     slurm_array_tasks(id; scratch_root="/scratch") -> DataFrame
@@ -45,9 +46,9 @@ function slurm_array_tasks(id; scratch_root::AbstractString="/scratch")
 end
 
 """
-    find_scratch_logs(study_dir, arrayid; scratch_root="/scratch") -> DataFrame
+    find_scratch_logs(study_dir, arrayid; scratch_root="/scratch", manifest=nothing) -> DataFrame
 
-Read the study manifest (preferring JLD2 over CSV) and locate its simulations'
+Read `manifest.jld2` and locate its simulations'
 `simulation.log` files on running tasks of the given Slurm array. A task ID such
 as `"18523211_2"` also inspects the whole array. Run on the HPC login node.
 
@@ -61,12 +62,18 @@ are skipped; Slurm/inspection failures raise errors. Missing logs are omitted.
 The function checks file existence only: it does not read log contents, parse
 status, copy files, or change simulation execution. Completed allocations no
 longer returned by Slurm are not inspected.
+An already-loaded JLD2 manifest can be supplied through `manifest` to reuse
+the same snapshot as `study_status`. CSV manifests are not read.
 """
 function find_scratch_logs(study_dir::AbstractString, arrayid;
-                           scratch_root::AbstractString="/scratch")
+                           scratch_root::AbstractString="/scratch", manifest=nothing)
     isabspath(scratch_root) && !occursin('\0', scratch_root) ||
         throw(ArgumentError("scratch_root must be an absolute path without NUL bytes"))
-    manifest = _read_study_manifest(abspath(study_dir))
+    if manifest === nothing
+        path = joinpath(abspath(study_dir), "manifest.jld2")
+        isfile(path) || throw(ArgumentError("no manifest.jld2 found in $(abspath(study_dir))"))
+        manifest = JLD2.load(path, "manifest")
+    end
     manifest isa DataFrames.AbstractDataFrame && hasproperty(manifest, :simulation) ||
         throw(ArgumentError("manifest must be a DataFrame containing simulation"))
     all(name -> name isa AbstractString && !isempty(strip(name)) &&
