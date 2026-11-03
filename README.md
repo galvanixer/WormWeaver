@@ -205,6 +205,10 @@ Failures retain their last stage with `failed=true`;
 `failed=false` does not establish that a process is running. This function only
 reads the files and does not modify the manifest, logs, or simulation outputs.
 
+Use `study_log_status("/path/to/simulation.log")` to parse a single local log,
+or `study_log_status(IOBuffer(text))` to parse log text returned by
+`read_scratch_log`. Both return `status`, `completed_blocks`, and `failed`.
+
 Use `status_summary(statuses)` to count simulations for each combination of
 `lattice_size`, `beta`, `status`, and `failed`. The returned count column is
 `n_simulations`; failed runs remain separate from other runs at the same stage.

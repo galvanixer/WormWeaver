@@ -216,6 +216,26 @@ logs are omitted and inspection failures raise errors. It only locates files:
 log contents and simulation status are not read. Existing launcher and copying
 behavior remain unchanged.
 
+Read one discovered log into a Julia string with:
+
+```julia
+text = read_scratch_log(logs[1, :])
+```
+
+This reads the entire log through `srun` using the selected row's job ID, node,
+and path. It preserves the text, does not copy or modify files, and does not
+parse simulation status. An ended allocation or an unreadable/missing log
+raises an error; discovery and reading happen at different times.
+
+Parse the log text with the public status parser:
+
+```julia
+progress = study_log_status(IOBuffer(text))
+```
+
+This applies the same stage, checkpoint, failure, and completion rules as local
+log parsing. The file-path method continues to work as before.
+
 To inspect a log on the node while its allocation is still running:
 
 ```bash

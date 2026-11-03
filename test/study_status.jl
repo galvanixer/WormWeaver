@@ -180,6 +180,23 @@ end
         @test table.failed == [falses(10); true; true]
         @test read.(sources) == original
 
+        # Scratch log text uses the same rules as every local-file fixture.
+        for (i, log) in enumerate(logs)
+            log === nothing && continue
+            @test study_log_status(IOBuffer(log)) ==
+                (; status=table.status[i], completed_blocks=table.completed_blocks[i],
+                   failed=table.failed[i])
+        end
+        empty_stream = IOBuffer()
+        @test study_log_status(empty_stream) ==
+            (; status="Pre Tuning", completed_blocks=0, failed=false)
+        @test isopen(empty_stream)
+        stream = IOBuffer("TUNING\nERROR: earlier attempt\nTHERMALIZATION\n")
+        readline(stream)
+        readline(stream)
+        @test study_log_status(stream) ==
+            (; status="Thermalizing", completed_blocks=0, failed=false)
+
         logpath = joinpath(root, "job2", "simulation.log")
         # A fresh attempt must not inherit an earlier attempt's state.
         write(logpath, "SUMMARY\n  Status SUCCESS\nSimulation failed:\nMultiWormQMC v0.2.0\nSETUP\nTUNING\n")

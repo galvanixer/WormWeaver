@@ -4,19 +4,31 @@ import DataFrames
 import JLD2
 import YAML
 
-_status_count(value) = parse(Int, replace(value, "," => ""))
+"""
+    study_log_status(path::AbstractString)
+    study_log_status(io::IO)
 
-function _checkpoint_status(blocks, target)
-    quarter = count(q -> cld(widemul(target, q), 4) <= blocks, 1:4)
-    return quarter == 0 ? "Production Started" : "Checkpoint $quarter"
+Parse a simulation log and return `(status, completed_blocks, failed)` as a named
+tuple. Accept a file path or an IO stream such as `IOBuffer(text)` containing a
+scratch log. Streams are read from their current position and left open.
+
+A missing file returns `status="No Log File"`, zero blocks, and `failed=false`.
+An empty log is `Pre Tuning`. For appended logs, report only the latest attempt.
+Checkpoint stages require saved/restored checkpoint evidence; `Finished`
+requires a success summary. A failure retains its stage and sets `failed=true`.
+Unreadable files raise an error. No files are modified.
+"""
+function study_log_status(path::AbstractString)
+    isfile(path) || return (; status="No Log File", completed_blocks=0, failed=false)
+    return open(study_log_status, path)
 end
 
-function _study_log_status(path::AbstractString)
+# Parse from the stream's current position; ownership stays with the caller.
+function study_log_status(io::IO)
     status, completed_blocks, failed = "Pre Tuning", 0, false
     production, target = false, 0
-    isfile(path) || return (; status="No Log File", completed_blocks, failed)
 
-    for line in eachline(path)
+    for line in eachline(io)
         line = strip(line)
         if startswith(line, "MultiWormQMC v")
             # Appended logs may contain earlier successful or failed attempts.
@@ -35,30 +47,26 @@ function _study_log_status(path::AbstractString)
         elseif occursin(r"^Status\s+SUCCESS$", line)
             status = "Finished"
         elseif production
+            checkpoint = false
             if (m = match(r"^Blocks\s+([\d,]+)$", line)) !== nothing
-                target = _status_count(m[1])
+                target = parse(Int, replace(m[1], "," => ""))
             elseif (m = match(r"^Restored blocks\s+([\d,]+)$", line)) !== nothing
-                completed_blocks = _status_count(m[1])
+                completed_blocks = parse(Int, replace(m[1], "," => ""))
             elseif startswith(line, "Checkpoints") &&
                    !occursin("Disabled", line) && target > 0
                 # A resumed log can start after previously saved quarters.
-                status = _checkpoint_status(completed_blocks, target)
+                checkpoint = true
             elseif (m = match(r"^(\d+)/(\d+)\s+\d+%\s", line)) !== nothing
                 completed_blocks, target = parse.(Int, m.captures)
-                if occursin('◆', line)
-                    status = _checkpoint_status(completed_blocks, target)
-                end
+                checkpoint = occursin('◆', line)
+            end
+            if checkpoint
+                quarter = count(q -> cld(widemul(target, q), 4) <= completed_blocks, 1:4)
+                status = quarter == 0 ? "Production Started" : "Checkpoint $quarter"
             end
         end
     end
     return (; status, completed_blocks, failed)
-end
-
-function _status_metadata(row, name; yaml=false)
-    hasproperty(row, Symbol(name)) || return missing
-    value = row[name]
-    value === nothing && return missing
-    return yaml && value isa AbstractString ? YAML.load(String(value)) : value
 end
 
 """
@@ -117,11 +125,16 @@ function _study_status(root::AbstractString, manifest)
             !isempty(strip(row.config)) ||
             throw(ArgumentError("each manifest row must have a simulation name and config path"))
         folder = dirname(joinpath(root, row.config))
-        progress = _study_log_status(joinpath(folder, "simulation.log"))
-        push!(table, (; study_id=_status_metadata(row, "study_id"),
-                      simulation=String(row.simulation),
-                      lattice_size=_status_metadata(row, "lattice.extent"; yaml=true),
-                      beta=_status_metadata(row, "system.beta"), progress...))
+        progress = study_log_status(joinpath(folder, "simulation.log"))
+        study_id = hasproperty(row, :study_id) ? something(row.study_id, missing) : missing
+        lattice_size = hasproperty(row, Symbol("lattice.extent")) ?
+            something(row["lattice.extent"], missing) : missing
+        beta = hasproperty(row, Symbol("system.beta")) ?
+            something(row["system.beta"], missing) : missing
+        if lattice_size isa AbstractString
+            lattice_size = YAML.load(String(lattice_size))
+        end
+        push!(table, (; study_id, simulation=String(row.simulation), lattice_size, beta, progress...))
     end
     return table
 end

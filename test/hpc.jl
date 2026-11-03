@@ -77,7 +77,7 @@ end
             "srun" => raw"""
             #!/bin/bash
             jobid= node=
-            while [[ "$1" != bash ]]; do
+            while [[ "$1" == --* ]]; do
                 case "$1" in
                     --jobid=*) jobid=${1#*=} ;;
                     --nodelist=*) node=${1#*=} ;;
@@ -122,6 +122,25 @@ end
             @test !ispath(joinpath(root, "injected"))
             @test isequal(find_scratch_logs(study, "18523211_2"; scratch_root=scratch), table)
 
+            # Read complete text through the actual cat invocation. The quoted
+            # path must remain one argument and text must be returned unchanged.
+            content = "MultiWormQMC v0.2\nPRODUCTION\n  25/100 25% 1s ◆\nno final newline"
+            write(paths[3], content)
+            @test read_scratch_log(table[4, :]) == content
+            @test study_log_status(IOBuffer(read_scratch_log(table[4, :]))) ==
+                (; status="Checkpoint 1", completed_blocks=25, failed=false)
+            @test read(paths[3], String) == content
+            @test read_scratch_log(NamedTuple(table[4, :])) == content
+            write(paths[3], "")
+            @test read_scratch_log(table[4, :]) == ""
+            @test !ispath(joinpath(root, "injected"))
+            absent = (; jobid=18523213, node="hpc-n664", log_path=joinpath(root, "missing.log"))
+            @test_throws ProcessFailedException read_scratch_log(absent)
+            @test_throws ArgumentError read_scratch_log((; jobid=18523213))
+            @test_throws ArgumentError read_scratch_log(merge(absent, (; jobid=0)))
+            @test_throws ArgumentError read_scratch_log(merge(absent, (; node=missing)))
+            @test_throws ArgumentError read_scratch_log(merge(absent, (; log_path="relative.log")))
+
             # Existence does not require opening/reading log contents.
             chmod(paths[1], 0o000)
             try
@@ -131,6 +150,7 @@ end
             end
             withenv("HPC_FAIL_NODE" => "hpc-n664") do
                 @test_throws ProcessFailedException find_scratch_logs(study, 18523211; scratch_root=scratch)
+                @test_throws ProcessFailedException read_scratch_log(table[1, :])
             end
             @test_throws ArgumentError find_scratch_logs(study, 18523211; scratch_root="relative")
             for bad in ("../sim1", "sim1/subdir", "", ".", "..", missing)

@@ -127,3 +127,28 @@ function find_scratch_logs(study_dir::AbstractString, arrayid;
     order = Dict(name => i for (i, name) in enumerate(simulations))
     return table[sortperm([order[name] for name in table.simulation]), :]
 end
+
+"""
+    read_scratch_log(row) -> String
+
+Read the full log identified by a row from `find_scratch_logs`, using its
+`jobid`, `node`, and `log_path`. Run on the HPC login node. A named tuple with
+these fields is also accepted.
+
+Use a read-only `srun` step inside the allocation and return the log text
+unchanged. No files are copied or modified and no status is parsed. Slurm or
+file-read failures raise an error, including when a log disappears or its
+allocation ends after discovery.
+"""
+function read_scratch_log(row)
+    all(name -> hasproperty(row, name), (:jobid, :node, :log_path)) ||
+        throw(ArgumentError("row must contain jobid, node, and log_path"))
+    jobid, node, path = row.jobid, row.node, row.log_path
+    jobid isa Integer && !(jobid isa Bool) && jobid > 0 ||
+        throw(ArgumentError("jobid must be a positive integer"))
+    node isa AbstractString && !isempty(strip(node)) && !occursin('\0', node) ||
+        throw(ArgumentError("node must be a nonblank string without NUL bytes"))
+    path isa AbstractString && isabspath(path) && !occursin('\0', path) ||
+        throw(ArgumentError("log_path must be an absolute path without NUL bytes"))
+    return read(`srun --jobid=$jobid --nodelist=$node --overlap --nodes=1 --ntasks=1 --cpus-per-task=1 --quiet --chdir=/ cat -- $path`, String)
+end
