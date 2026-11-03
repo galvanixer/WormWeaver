@@ -65,6 +65,8 @@ With `detailed=true`, also print stages in logical order, combining local and
 scratch counts and labeling failures with their last stage. `No log` and
 `Unspecified` source columns appear only when needed. Legacy inputs without
 `log_source` show stage totals alone.
+Overall counts end with a divided Total row. Stage tables also end with source
+totals; multiple parameter groups have a subtotal each and a final grand total.
 
 Full lattice dimensions and missing metadata are preserved in the display.
 Colors follow the IO context's `:color` setting, using Dark2_8 green for success
@@ -98,7 +100,7 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
         push!(sections, (; title="PROGRESS BY PARAMETERS", headers, rows, numeric_start=3,
                           row_colors=fill("", length(rows)),
                           column_colors=["", "", "", green, orange, ""],
-                          breaks=Set{Int}(), footer=true))
+                          breaks=Set{Int}(), dividers=Set([length(rows)])))
     end
 
     if detailed && overall.total > 0
@@ -119,6 +121,7 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
         push!(headers, "Total")
         push!(source_columns, :n_simulations)
         rows, row_colors, breaks = Vector{String}[], String[], Set{Int}()
+        dividers = Set{Int}()
         known = ["No Log File", "Pre Tuning", "Tuning", "Thermalizing", "Production Started",
                  "Checkpoint 1", "Checkpoint 2", "Checkpoint 3", "Checkpoint 4", "Finished"]
         for group in DataFrames.groupby(stages, [:lattice_size, :beta]; sort=false)
@@ -139,10 +142,22 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
                 push!(rows, cells)
                 push!(row_colors, row.failed ? orange : row.status == "Finished" ? green : "")
             end
+            if multiple
+                cells = ["", "", "Subtotal"]
+                append!(cells, [string(sum(group[!, column])) for column in source_columns])
+                push!(rows, cells)
+                push!(row_colors, "")
+                push!(dividers, length(rows))
+            end
         end
+        totals = multiple ? ["", "", "Grand total"] : ["Total"]
+        append!(totals, [string(sum(stages[!, column])) for column in source_columns])
+        push!(rows, totals)
+        push!(row_colors, "")
+        push!(dividers, length(rows))
         push!(sections, (; title="PROGRESS BY STAGE", headers, rows,
                           numeric_start=multiple ? 4 : 2, row_colors,
-                          column_colors=fill("", length(headers)), breaks, footer=false))
+                          column_colors=fill("", length(headers)), breaks, dividers))
     end
 
     # Widths use complete, uncolored text, including full lattice dimensions.
@@ -159,15 +174,14 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
     end
     println(io, rule)
     count_width = max(5, textwidth(string(overall.total)))
-    for (label, value, color) in (("Simulations", overall.total, ""),
-                                  ("Finished", overall.finished, green),
+    for (label, value, color) in (("Finished", overall.finished, green),
                                   ("Failed", overall.failed, orange),
-                                  ("Remaining", overall.remaining, ""))
+                                  ("Remaining", overall.remaining, ""),
+                                  ("Total", overall.total, ""))
+        label == "Total" && println(io, rule)
         print(io, rpad(label, 13), color, lpad(string(value), count_width))
-        if label != "Simulations"
-            percentage = overall.total == 0 ? 0.0 : round(100 * value / overall.total; digits=1)
-            print(io, "  ", lpad(string(percentage, "%"), 6))
-        end
+        percentage = overall.total == 0 ? 0.0 : round(100 * value / overall.total; digits=1)
+        print(io, "  ", lpad(string(percentage, "%"), 6))
         isempty(color) || print(io, reset)
         println(io)
     end
@@ -181,7 +195,7 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
             if i > 0 && i in section.breaks
                 println(io)
             end
-            if section.footer && i == length(section.rows)
+            if i in section.dividers
                 println(io, rule)
             end
             cells = i == 0 ? section.headers : section.rows[i]

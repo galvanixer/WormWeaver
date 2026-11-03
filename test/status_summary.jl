@@ -47,13 +47,19 @@ import DataFrames
     io = IOBuffer()
     @test isequal(status_summary(df; io), expected)
     text = String(take!(io))
-    @test occursin(r"Simulations\s+120", text)
+    @test occursin(r"─+\nTotal\s+120\s+100\.0%", text)
+    @test !occursin("Simulations", text)
     @test occursin(r"Finished\s+60\s+50\.0%", text)
     @test occursin(r"Failed\s+15\s+12\.5%", text)
     @test occursin(r"Remaining\s+45\s+37\.5%", text)
     @test occursin(r"TOTAL\s+120\s+60\s+15\s+45", text)
     @test occursin("PROGRESS BY PARAMETERS", text)
     @test occursin("PROGRESS BY STAGE", text)
+    stage_text = split(text, "PROGRESS BY STAGE\n"; limit=2)[2]
+    @test length(collect(eachmatch(r"^\s*Subtotal\s+"m, stage_text))) == 4
+    @test length(collect(eachmatch(r"^\s*Subtotal\s+5\s+25\s+0\s+30$"m, stage_text))) == 3
+    @test occursin(r"^\s*Subtotal\s+5\s+20\s+5\s+30$"m, stage_text)
+    @test occursin(r"─+\n\s*Grand total\s+20\s+95\s+5\s+120"m, stage_text)
     @test occursin(r"Local\s+Scratch\s+No log\s+Total", text)
     @test occursin("Failed (Tuning)", text)
     @test occursin("Failed (Thermalizing)", text)
@@ -94,6 +100,7 @@ import DataFrames
     @test !occursin("Scratch", legacy_text)
     @test !occursin("Unspecified", legacy_text)
     @test occursin("PROGRESS BY STAGE", legacy_text)
+    @test occursin(r"^\s*Grand total\s+120$"m, legacy_text)
     @test_throws ArgumentError status_summary_data(DataFrames.select(df, DataFrames.Not(:failed)))
 end
 
@@ -120,6 +127,7 @@ end
     @test occursin(r"Stage\s+Local\s+Scratch\s+Total", text)
     @test !occursin("No log", text)
     @test !occursin("Unspecified", text)
+    @test occursin(r"─+\nTotal\s+0\s+14\s+14", text)
     expected_order = [known[1:3]; "Failed (Tuning)"; known[4:end];
                       "Failed (Finished)"; "Custom first"; "Custom second"]
     lines = split(text, '\n')
@@ -146,6 +154,7 @@ end
     @test occursin("[8, 8, 8]", mixed_text)
     @test occursin("—", mixed_text)
     @test occursin(r"Local\s+Scratch\s+No log\s+Unspecified\s+Total", mixed_text)
+    @test occursin(r"^\s*Grand total\s+1\s+0\s+1\s+2\s+4$"m, mixed_text)
 
     empty = mixed[1:0, :]
     empty_data = status_summary_data(empty)
@@ -154,8 +163,41 @@ end
     result = status_summary(empty; io)
     empty_text = String(take!(io))
     @test startswith(empty_text, "STUDY STATUS\n")
-    @test length(collect(eachmatch(r"0\.0%", empty_text))) == 3
+    @test length(collect(eachmatch(r"0\.0%", empty_text))) == 4
     @test !occursin("NaN", empty_text)
     @test !occursin("PROGRESS BY", empty_text)
     @test isequal(result, empty_data.summary)
+end
+
+@testset "Total footers reconcile progress and log sources" begin
+    df = DataFrames.DataFrame(lattice_size=Any[], beta=Float64[], status=String[],
+                              failed=Bool[], log_source=String[])
+    for (stage, failed, source, n) in (("Tuning", true, "local", 15),
+            ("Thermalizing", false, "scratch", 1),
+            ("Production Started", false, "scratch", 3),
+            ("Checkpoint 1", false, "scratch", 7),
+            ("Checkpoint 2", false, "scratch", 5),
+            ("Checkpoint 3", false, "scratch", 2),
+            ("Finished", false, "local", 25), ("Finished", false, "scratch", 2))
+        for _ in 1:n
+            push!(df, ([64], 64.0, stage, failed, source))
+        end
+    end
+    original = deepcopy(df)
+    io = IOBuffer()
+    result = status_summary(df; io)
+    text = String(take!(io))
+    overall, stages = split(text, "PROGRESS BY STAGE\n"; limit=2)
+    @test occursin(r"Finished\s+27\s+45\.0%", overall)
+    @test occursin(r"Failed\s+15\s+25\.0%", overall)
+    @test occursin(r"Remaining\s+18\s+30\.0%\n─+\nTotal\s+60\s+100\.0%", overall)
+    @test occursin(r"Finished\s+25\s+2\s+27\n─+\nTotal\s+40\s+20\s+60", stages)
+    @test !occursin("Subtotal", stages)
+    @test !occursin("Grand total", stages)
+    @test isequal(result, status_summary_data(df).summary)
+    @test isequal(df, original)
+    @test isequal(status_summary(df; io, detailed=false), result)
+    compact = String(take!(io))
+    @test occursin(r"─+\nTotal\s+60\s+100\.0%", compact)
+    @test !occursin("PROGRESS BY STAGE", compact)
 end

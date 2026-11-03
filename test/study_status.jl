@@ -15,7 +15,7 @@ import JLD2
     summary = status_summary(df; io)
     printed = String(take!(io))
     @test startswith(printed, "STUDY STATUS\n")
-    @test occursin(r"Simulations\s+9", printed)
+    @test occursin(r"Total\s+9\s+100\.0%", printed)
     @test occursin(r"Finished\s+5\s+55\.6%", printed)
     @test occursin(r"Failed\s+1\s+11\.1%", printed)
     @test occursin(r"Remaining\s+3\s+33\.3%", printed)
@@ -58,7 +58,7 @@ import JLD2
     @test isequal(sourced, original)
 
     empty = status_summary(sourced[1:0, :]; io)
-    @test occursin(r"Simulations\s+0", String(take!(io)))
+    @test occursin(r"Total\s+0\s+0\.0%", String(take!(io)))
     @test DataFrames.nrow(empty) == 0
     @test names(empty) == names(summary)
     @test eltype(empty.n_simulations) == Int

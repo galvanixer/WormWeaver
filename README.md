@@ -242,10 +242,12 @@ grouped = status_summary(statuses; io=devnull) # Return counts without printing.
 data = status_summary_data(statuses)      # Calculate all counts without printing.
 ```
 
-The dashboard always shows total simulations, finished, failed, and remaining,
-with percentages. A single lattice/beta combination appears once in the header;
-multiple combinations get a parameter table and grand total. Detailed mode adds
-stages in logical order with Local, Scratch, and Total side by side. No log and
+The dashboard shows Finished, Failed, and Remaining with percentages, followed
+by Total below a divider (100.0% for a nonempty study). A single lattice/beta
+combination appears once in the header; multiple combinations get a parameter
+table and grand total. Detailed mode adds stages in logical order with Local,
+Scratch, and Total side by side. Stage tables end with source totals; multiple
+parameter groups have a subtotal each and a final grand total. No log and
 Unspecified columns appear only when needed. Failures appear separately, such
 as `Failed (Tuning)`, retaining their last stage. Full lattice arrays, including
 `[16, 16]` and `[8, 8, 8]`, remain visible. Missing parameters display as `—`.

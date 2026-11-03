@@ -297,6 +297,9 @@ once in the header. Stage rows combine Local and Scratch counts; a No log
 column appears for missing logs and an Unspecified column accounts for unknown
 source labels. Older tables without `log_source` show stage totals only.
 Failed rows retain their last stage, such as `Failed (Tuning)`.
+Overall progress ends with Total below a divider. Stage tables likewise end
+with totals for each source; multiple parameter groups have subtotals and a
+grand total. These are display rows only and do not alter returned counts.
 
 `counts` contains the original grouped `summary`, `overall`, `parameters`,
 `stages`, and `has_source`. The dashboard retains the same grouped return table
