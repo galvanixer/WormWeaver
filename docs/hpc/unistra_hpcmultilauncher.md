@@ -248,8 +248,45 @@ study-directory log. `log_source` records `"scratch"`, `"local"`, or `"none"`
 when no log exists. Multiple scratch matches and read failures raise errors.
 An empty but existing log is still recorded as `"scratch"` or `"local"`.
 `study_status(study_dir)` reads only local logs and also includes `log_source`.
-This does not change how simulations run or copy files. `status_manifest`
-continues to use its existing local-only snapshot workflow.
+This does not change how simulations run or copy files. To retain all manifest
+parameters along with refreshed progress and `log_source`, use:
+
+```julia
+snapshot = status_manifest(study_dir; arrayid=18523211, scratch_root="/scratch")
+# Save the same information in a new timestamped JLD2 snapshot:
+snapshot = status_manifest(study_dir; arrayid=18523211, save=true)
+```
+
+Without `arrayid`, snapshots read only study-directory logs. All collection
+functions use the JLD2 manifest; source manifests and simulation files stay
+unchanged. An already-loaded manifest is reused during scratch discovery.
+
+### Terminal dashboard
+
+```julia
+status_summary(statuses);                  # Full dashboard, without REPL table echo.
+status_summary(statuses; detailed=false);  # Overall and parameter summaries.
+counts = status_summary_data(statuses)     # Pure calculation; no terminal output.
+```
+
+The dashboard shows overall counts and percentages, a parameter table only
+when multiple lattice/beta combinations exist, and detailed stage counts by
+source. For a single combination, full lattice dimensions and beta appear
+once in the header. Stage rows combine Local and Scratch counts; a No log
+column appears for missing logs and an Unspecified column accounts for unknown
+source labels. Older tables without `log_source` show stage totals only.
+Failed rows retain their last stage, such as `Failed (Tuning)`.
+
+`counts` contains the original grouped `summary`, `overall`, `parameters`,
+`stages`, and `has_source`. The dashboard retains the same grouped return table
+as before; rendering order and combined source columns affect only the display.
+Failures take precedence over success markers in the summary counts.
+
+Dark2_8 green marks successful finishes, orange marks failures, and unfinished
+stages remain neutral. Colors follow the IO context and are disabled for plain
+output. Use `io=devnull` to suppress all printing or an IOBuffer/file to capture
+it. The dashboard reports log-derived progress, not whether Slurm tasks or
+individual simulation processes are currently running.
 
 To inspect a log on the node while its allocation is still running:
 

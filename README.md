@@ -221,19 +221,39 @@ Use `study_log_status("/path/to/simulation.log")` to parse a single local log,
 or `study_log_status(IOBuffer(text))` to parse log text returned by
 `read_scratch_log`. Both return `status`, `completed_blocks`, and `failed`.
 
-Use `status_summary(statuses)` to count simulations for each combination of
-`lattice_size`, `beta`, `status`, and `failed`. The returned count column is
-`n_simulations`; failed runs remain separate from other runs at the same stage.
-When present, `log_source` is also included in the grouping, separating scratch,
-local, and absent logs at the same stage. Tables without it retain the original
-grouping.
-Before returning the table, it prints the total number of simulations, how many
-finished successfully, how many failed, and how many are left. Runs left have
-neither finished successfully nor failed. Use `io` to redirect this output,
-for example `status_summary(statuses; io=devnull)` to suppress the totals.
-For tables with `log_source`, the totals also include `Scratch logs`,
-`Local logs`, and `No log found`. These counts describe log locations and
-do not establish whether the simulation processes are running.
+Print an adaptive terminal dashboard with:
+
+```julia
+status_summary(statuses);                 # Dashboard; suppress the REPL table echo.
+status_summary(statuses; detailed=false); # Overall and parameter totals only.
+grouped = status_summary(statuses; io=devnull) # Return counts without printing.
+data = status_summary_data(statuses)      # Calculate all counts without printing.
+```
+
+The dashboard always shows total simulations, finished, failed, and remaining,
+with percentages. A single lattice/beta combination appears once in the header;
+multiple combinations get a parameter table and grand total. Detailed mode adds
+stages in logical order with Local, Scratch, and Total side by side. No log and
+Unspecified columns appear only when needed. Failures appear separately, such
+as `Failed (Tuning)`, retaining their last stage. Full lattice arrays, including
+`[16, 16]` and `[8, 8, 8]`, remain visible. Missing parameters display as `—`.
+
+`status_summary` still returns the original grouped DataFrame: `lattice_size`,
+`beta`, `status`, `failed`, optional `log_source`, and `n_simulations`, in
+first-appearance order. The display's stage sorting and source pivot do not
+change that return value. Tables without `log_source` keep their original
+grouping and show stage totals without source columns.
+
+`status_summary_data` returns `summary`, `overall`, `parameters`, `stages`, and
+`has_source`. Overall and parameter counts are `total`, `finished`, `failed`,
+and `remaining`; stage counts are `n_local`, `n_scratch`, `n_none`,
+`n_unspecified`, and `n_simulations`. A failure takes precedence over a success
+stage. Remaining simulations include missing logs and exclude reported failures.
+
+Colors respect the IO context: Dark2_8 green for successful finishes and orange
+for failures, with neutral unfinished stages. Plain IO/file output has no ANSI
+escapes; use `IOContext(io, :color => false)` to explicitly disable colors.
+All output goes through `io`. These are log-derived counts, not Slurm job states.
 
 Get a manifest with current progress for inspecting simulations midway:
 
@@ -243,13 +263,15 @@ failed_runs = snapshot[snapshot.failed, :]
 unfinished = snapshot[(snapshot.status .!= "Finished") .& .!snapshot.failed, :]
 
 snapshot = status_manifest(study_dir; save=true)  # Also save a snapshot.
+# Include running-array scratch logs and their source labels:
+snapshot = status_manifest(study_dir; arrayid=18523211, scratch_root="/scratch", save=true)
 ```
 
 The default `save=false` leaves the study directory unchanged. With `save=true`,
 this also writes a new file such as `manifest_status_20261103_143012_123Z.jld2`
 in the study directory. The filename timestamp and stored `captured_at_utc`
 capture-start time use UTC. All manifest parameters are preserved, with
-`status`, `completed_blocks`, and `failed` added or refreshed by joining on
+`status`, `completed_blocks`, `failed`, and `log_source` added or refreshed by joining on
 `(study_id, simulation)`. Keys must be unique and study IDs nonblank.
 The function reads only `manifest.jld2` and always returns
 the joined DataFrame. Original files and earlier snapshots are not changed;

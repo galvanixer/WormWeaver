@@ -183,8 +183,9 @@ end
                 write(queue, "18523211_3|18523211|RUNNING|hpc-n937\n" *
                              "18523211_2|18523213|RUNNING|hpc-n664\n")
                 status_manifest_fixture = copy(manifest[1:4, :])
+                status_manifest_fixture.study_id = fill("hpc-study", 4)
                 status_manifest_fixture.config = ["home$i/config.yaml" for i in 1:4]
-                push!(status_manifest_fixture, ("sim99", "home99/config.yaml"))
+                push!(status_manifest_fixture, ("sim99", "home99/config.yaml", "hpc-study"))
                 JLD2.jldsave(native; manifest=status_manifest_fixture)
                 # Duplicate locations are rejected even if a local log exists.
                 @test_throws ArgumentError study_status(study; arrayid=18523211, scratch_root=scratch)
@@ -204,6 +205,14 @@ end
                 @test statuses.log_source == ["scratch", "local", "scratch", "scratch", "none"]
                 @test read.([native; paths[1:3]]) == before_files
                 @test sum(status_summary(statuses; io=devnull).n_simulations) == 5
+
+                snapshot = status_manifest(study; arrayid="18523211_2", scratch_root=scratch, save=true)
+                @test snapshot.log_source == statuses.log_source
+                @test snapshot.status == statuses.status
+                @test snapshot.simulation == status_manifest_fixture.simulation
+                saved_path = joinpath(study, only(filter(startswith("manifest_status_"), readdir(study))))
+                @test isequal(JLD2.load(saved_path, "manifest"), snapshot)
+                @test read.([native; paths[1:3]]) == before_files
 
                 before_calls = read(calls)
                 local_statuses = study_status(study)

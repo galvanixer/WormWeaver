@@ -13,7 +13,12 @@ import JLD2
     original = deepcopy(df)
     io = IOBuffer()
     summary = status_summary(df; io)
-    @test String(take!(io)) == "Total simulations: 9\nFinished successfully: 5\nFailed: 1\nLeft: 3\n\n"
+    printed = String(take!(io))
+    @test startswith(printed, "STUDY STATUS\n")
+    @test occursin(r"Simulations\s+9", printed)
+    @test occursin(r"Finished\s+5\s+55\.6%", printed)
+    @test occursin(r"Failed\s+1\s+11\.1%", printed)
+    @test occursin(r"Remaining\s+3\s+33\.3%", printed)
     @test names(summary) == ["lattice_size", "beta", "status", "failed", "n_simulations"]
     @test summary.n_simulations == [2, 1, 1, 1, 1, 1, 2]
     @test isequal(summary[:, 1:4], df[[1, 3, 4, 5, 6, 7, 8], :])
@@ -21,7 +26,7 @@ import JLD2
     @test isequal(df, original)
 
     empty = status_summary(df[1:0, :]; io)
-    @test String(take!(io)) == "Total simulations: 0\nFinished successfully: 0\nFailed: 0\nLeft: 0\n\n"
+    @test occursin(r"Remaining\s+0\s+0\.0%", String(take!(io)))
     @test DataFrames.nrow(empty) == 0
     @test names(empty) == names(summary)
     @test eltype(empty.n_simulations) == Int
@@ -33,15 +38,19 @@ import JLD2
                                    status=["Finished", "Finished", "Checkpoint 4"],
                                    failed=[false, true, false])
     status_summary(terminal; io)
-    @test String(take!(io)) == "Total simulations: 3\nFinished successfully: 1\nFailed: 1\nLeft: 1\n\n"
+    printed = String(take!(io))
+    @test occursin(r"Finished\s+1\s+33\.3%", printed)
+    @test occursin(r"Failed\s+1\s+33\.3%", printed)
+    @test occursin(r"Remaining\s+1\s+33\.3%", printed)
+    @test occursin("Failed (Finished)", printed)
 
     sourced = copy(df)
     sourced.log_source = ["scratch", "local", "scratch", "scratch", "local",
                           "local", "scratch", "none", "none"]
     original = deepcopy(sourced)
     summary = status_summary(sourced; io)
-    @test String(take!(io)) == "Total simulations: 9\nFinished successfully: 5\n" *
-          "Failed: 1\nLeft: 3\nScratch logs: 4\nLocal logs: 3\nNo log found: 2\n\n"
+    printed = String(take!(io))
+    @test occursin(r"Local\s+Scratch\s+No log\s+Total", printed)
     @test names(summary) == ["lattice_size", "beta", "status", "failed", "log_source", "n_simulations"]
     @test summary.n_simulations == [1, 1, 1, 1, 1, 1, 1, 2]
     @test isequal(summary[:, 1:5], sourced[1:8, :])
@@ -49,8 +58,7 @@ import JLD2
     @test isequal(sourced, original)
 
     empty = status_summary(sourced[1:0, :]; io)
-    @test String(take!(io)) == "Total simulations: 0\nFinished successfully: 0\n" *
-          "Failed: 0\nLeft: 0\nScratch logs: 0\nLocal logs: 0\nNo log found: 0\n\n"
+    @test occursin(r"Simulations\s+0", String(take!(io)))
     @test DataFrames.nrow(empty) == 0
     @test names(empty) == names(summary)
     @test eltype(empty.n_simulations) == Int
@@ -63,7 +71,8 @@ end
             study_id=["study-b", "study-a", "study-a"],
             simulation=["sim1", "sim1", "sim2"],
             config=["job-b/config.yaml", "job-a/config.yaml", "pending/config.yaml"],
-            status=fill("stale", 3), failed=trues(3), completed_blocks=fill(-1, 3))
+            status=fill("stale", 3), failed=trues(3), completed_blocks=fill(-1, 3),
+            log_source=fill("scratch", 3))
         manifest[!, "lattice.extent"] = [[16, 16], [32], [64]]
         manifest[!, "system.beta"] = [8.0, 16.0, 32.0]
         manifest[!, "custom.settings"] = [Dict("weights" => [1, 2]) for _ in 1:3]
@@ -103,11 +112,12 @@ end
         @test before <= saved["captured_at_utc"] <= Dates.now(Dates.UTC)
         @test basename(path) == "manifest_status_" *
               Dates.format(saved["captured_at_utc"], "yyyymmdd_HHMMSS_sss") * "Z.jld2"
-        parameters = DataFrames.Not([:status, :completed_blocks, :failed])
+        parameters = DataFrames.Not([:status, :completed_blocks, :failed, :log_source])
         @test isequal(table[:, parameters], manifest[:, parameters])
         @test table.status == ["Tuning", "Finished", "No Log File"]
         @test table.completed_blocks == [0, 100, 0]
         @test table.failed == [true, false, false]
+        @test table.log_source == ["local", "local", "none"]
         @test read.(sources) == original
 
         # A later snapshot reflects new progress and preserves the old snapshot.
@@ -122,6 +132,7 @@ end
         @test refreshed.status[1] == "Checkpoint 1"
         @test refreshed.completed_blocks[1] == 25
         @test !refreshed.failed[1]
+        @test refreshed.log_source == ["local", "local", "none"]
 
         # Missing IDs and duplicate composite keys must not produce snapshots.
         existing = sort(readdir(root))
@@ -152,6 +163,7 @@ end
         @test table.status == ["No Log File"]
         @test table.completed_blocks == [0]
         @test table.failed == [false]
+        @test table.log_source == ["none"]
         saved_table = status_manifest(root; save=true)
         path = joinpath(root, only(setdiff(readdir(root), existing)))
         @test isequal(saved_table, table)

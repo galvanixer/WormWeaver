@@ -172,10 +172,10 @@ function study_status(root::AbstractString; arrayid=nothing,
 end
 
 """
-    status_manifest(root; save=false) -> DataFrame
+    status_manifest(root; save=false, arrayid=nothing, scratch_root="/scratch") -> DataFrame
 
 Read the study manifest and current simulation logs, then return all manifest
-columns with refreshed `status`, `completed_blocks`, and `failed` columns.
+columns with refreshed `status`, `completed_blocks`, `failed`, and `log_source` columns.
 Join on `(study_id, simulation)`, requiring nonblank study IDs and unique keys,
 and preserve manifest row order. Read only `manifest.jld2`.
 
@@ -186,20 +186,23 @@ under `captured_at_utc`. The return value is the DataFrame in either mode.
 Existing files are never overwritten; a timestamp collision raises an error.
 Source manifests, configs, logs, and simulation outputs are not modified.
 This is a log-progress snapshot, not a running-process or failure-cause check.
+The `arrayid` and `scratch_root` keywords behave as in `study_status`; by
+default only local logs are read. Reuse the loaded JLD2 manifest for collection.
 """
-function status_manifest(root::AbstractString; save::Bool=false)
+function status_manifest(root::AbstractString; save::Bool=false, arrayid=nothing,
+                         scratch_root::AbstractString="/scratch")
     root = abspath(root)
     captured_at_utc = Dates.now(Dates.UTC)
     path = joinpath(root, "manifest.jld2")
     isfile(path) || throw(ArgumentError("no manifest.jld2 found in $root"))
     manifest = JLD2.load(path, "manifest")
-    statuses = study_status(root; manifest)
+    statuses = study_status(root; manifest, arrayid, scratch_root)
     hasproperty(manifest, :study_id) &&
         all(id -> id isa AbstractString && !isempty(strip(id)), manifest.study_id) ||
         throw(ArgumentError("manifest must contain a nonblank study_id for every simulation"))
 
     keys = [:study_id, :simulation]
-    progress = [:status, :completed_blocks, :failed]
+    progress = [:status, :completed_blocks, :failed, :log_source]
     # Refresh any previous status columns without duplicating parameter aliases.
     base = DataFrames.select(manifest, DataFrames.Not(intersect(names(manifest), string.(progress))))
     table = DataFrames.leftjoin(base, DataFrames.select(statuses, [keys; progress]);
@@ -212,47 +215,4 @@ function status_manifest(root::AbstractString; save::Bool=false)
         JLD2.jldsave(destination; manifest=table, captured_at_utc)
     end
     return table
-end
-
-"""
-    status_summary(df::AbstractDataFrame; io=stdout) -> DataFrame
-
-Summarize a `study_status` table by `lattice_size`, `beta`, `status`, and `failed`,
-also grouping by `log_source` when present, with a count column named
-`n_simulations`. Failed runs remain separate from
-other runs at the same stage. Only observed combinations are returned, in order
-of first appearance; missing lattice sizes or beta values are retained.
-Print the total number of simulations, successful finishes, failures, and runs
-left before returning the grouped table. Successful runs have `status="Finished"`
-and `failed=false`; failures take precedence. Runs left are neither successful
-nor failed, regardless of whether their processes are currently running.
-When `log_source` is present, also print counts of scratch logs, local logs,
-and simulations with no log found. Sources describe where logs were read,
-not whether simulations are currently running. Tables without `log_source`
-retain the original grouping and printed totals.
-Use `io` to redirect this output. The input table is not modified.
-"""
-function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout)
-    columns = [:lattice_size, :beta, :status, :failed]
-    all(column -> hasproperty(df, column), columns) ||
-        throw(ArgumentError("status table must contain lattice_size, beta, status, and failed"))
-    has_source = hasproperty(df, :log_source)
-    has_source && push!(columns, :log_source)
-    summary = DataFrames.combine(DataFrames.groupby(df, columns; sort=false),
-                                 DataFrames.nrow => :n_simulations)
-    total = DataFrames.nrow(df)
-    failed = count(identity, df.failed)
-    finished = count(row -> row.status == "Finished" && !row.failed, eachrow(df))
-    left = total - finished - failed
-    println(io, "Total simulations: ", total)
-    println(io, "Finished successfully: ", finished)
-    println(io, "Failed: ", failed)
-    println(io, "Left: ", left)
-    if has_source
-        println(io, "Scratch logs: ", count(isequal("scratch"), df.log_source))
-        println(io, "Local logs: ", count(isequal("local"), df.log_source))
-        println(io, "No log found: ", count(isequal("none"), df.log_source))
-    end
-    println(io)
-    return summary
 end
