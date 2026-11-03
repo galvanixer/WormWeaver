@@ -143,6 +143,7 @@ run:
   tuning:
     enabled: true  # Enable automatic tuning of sampler parameters.
     max_attempts: 10000  # Maximum adaptation windows per beta stage (one stage by default).
+    # max_seconds: 300.0  # Optional wall-time limit across all stages and equilibration.
     adapt_every: 100  # Run this many do_z_step! calls per adaptation window.
     stable_windows: 5  # Stop after this many consecutive satisfied windows.
     print_every_windows: 1000  # Print all transitions in first, every Nth, and final windows.
