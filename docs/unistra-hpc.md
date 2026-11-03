@@ -2,6 +2,9 @@
 
 This guide uses the multiwormqmc.jl checkout launcher and WormWeaver's generated jobfile. Replace the example username and study paths with your own.
 
+For array submission, command splitting, per-node concurrency, and scratch monitoring,
+see [how `hpc_multilauncher` runs a study](hpc/unistra_hpcmultilauncher.md).
+
 ## 1. Prepare the environment
 
 Log in to the HPC and load GCC:

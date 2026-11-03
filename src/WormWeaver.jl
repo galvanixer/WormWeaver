@@ -6,6 +6,7 @@ include("study_generation/init_config.jl")
 using .Study: generate_study
 
 include("monitoring/study_status.jl")
+include("monitoring/hpc.jl")
 include("aggregation/statistics.jl")
 include("aggregation/ratio_statistics.jl")
 include("aggregation/particle_histogram.jl")
@@ -17,5 +18,6 @@ include("aggregation/observable_table.jl")
 
 export generate_study, init_study, init_config, aggregate, observable_table
 export green_ratio_statistics, study_status, status_summary, status_manifest
+export slurm_array_tasks, find_scratch_logs
 
 end
