@@ -213,22 +213,24 @@ finished successfully, how many failed, and how many are left. Runs left have
 neither finished successfully nor failed. Use `io` to redirect this output,
 for example `status_summary(statuses; io=devnull)` to suppress the totals.
 
-Save a manifest with current progress for inspecting simulations midway:
+Get a manifest with current progress for inspecting simulations midway:
 
 ```julia
-snapshot_path = save_status_manifest(study_dir)
-snapshot = JLD2.load(snapshot_path, "manifest")
+snapshot = status_manifest(study_dir)  # Return a DataFrame without saving.
 failed_runs = snapshot[snapshot.failed, :]
 unfinished = snapshot[(snapshot.status .!= "Finished") .& .!snapshot.failed, :]
+
+snapshot = status_manifest(study_dir; save=true)  # Also save a snapshot.
 ```
 
-This writes a new file such as `manifest_status_20261103_143012_123Z.jld2`
+The default `save=false` leaves the study directory unchanged. With `save=true`,
+this also writes a new file such as `manifest_status_20261103_143012_123Z.jld2`
 in the study directory. The filename timestamp and stored `captured_at_utc`
 capture-start time use UTC. All manifest parameters are preserved, with
 `status`, `completed_blocks`, and `failed` added or refreshed by joining on
 `(study_id, simulation)`. Keys must be unique and study IDs nonblank.
-The function prefers the native manifest, falls back to CSV, and returns the
-absolute snapshot path. Original files and earlier snapshots are not changed;
+The function prefers the native manifest, falls back to CSV, and always returns
+the joined DataFrame. Original files and earlier snapshots are not changed;
 a filename collision raises an error. Compare snapshots to inspect progress
 over time, then use each row's `config` directory to locate `simulation.log`
 for failure details. Unfinished runs can be running, stalled, or not yet started;

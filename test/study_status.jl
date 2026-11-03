@@ -36,7 +36,7 @@ import JLD2
     @test String(take!(io)) == "Total simulations: 3\nFinished successfully: 1\nFailed: 1\nLeft: 1\n\n"
 end
 
-@testset "Status manifest snapshots" begin
+@testset "Status manifest and optional snapshots" begin
     mktempdir() do root
         # Reused simulation labels require both key columns, not simulation alone.
         manifest = DataFrames.DataFrame(
@@ -65,10 +65,19 @@ end
                    joinpath(root, "job-b", "config.yaml"), joinpath(root, "job-a", "config.yaml")]
         original = read.(sources)
 
+        existing = readdir(root)
+        table = status_manifest(root)
+        @test table isa DataFrames.DataFrame
+        @test readdir(root) == existing
+        @test isequal(status_manifest(root; save=false), table)
+        @test readdir(root) == existing
+
         before = Dates.now(Dates.UTC)
-        path = save_status_manifest(root)
+        saved_table = status_manifest(root; save=true)
+        path = joinpath(root, only(setdiff(readdir(root), existing)))
         saved = JLD2.load(path)
-        table = saved["manifest"]
+        @test isequal(saved_table, table)
+        @test isequal(saved["manifest"], saved_table)
         @test isabspath(path) && dirname(path) == root
         @test occursin(r"^manifest_status_\d{8}_\d{6}_\d{3}Z\.jld2$", basename(path))
         @test before <= saved["captured_at_utc"] <= Dates.now(Dates.UTC)
@@ -84,10 +93,12 @@ end
         # A later snapshot reflects new progress and preserves the old snapshot.
         snapshot_bytes = read(path)
         write(failed_log, "MultiWormQMC v0.2.0\nPRODUCTION\n  25/100 25% 1.000s ◆\n")
-        next_path = save_status_manifest(root)
+        existing = readdir(root)
+        refreshed = status_manifest(root; save=true)
+        next_path = joinpath(root, only(setdiff(readdir(root), existing)))
         @test next_path != path
         @test read(path) == snapshot_bytes
-        refreshed = JLD2.load(next_path, "manifest")
+        @test isequal(JLD2.load(next_path, "manifest"), refreshed)
         @test refreshed.status[1] == "Checkpoint 1"
         @test refreshed.completed_blocks[1] == 25
         @test !refreshed.failed[1]
@@ -99,7 +110,8 @@ end
                         DataFrames.transform(manifest, :study_id => (_ -> [missing, "study-a", "study-a"]) => :study_id),
                         vcat(manifest, manifest[1:1, :]))
             JLD2.jldsave(native; manifest=invalid)
-            @test_throws ArgumentError save_status_manifest(root)
+            @test_throws ArgumentError status_manifest(root)
+            @test_throws ArgumentError status_manifest(root; save=true)
             @test sort(readdir(root)) == existing
         end
     end
@@ -108,11 +120,17 @@ end
         manifest = DataFrames.DataFrame(study_id=["csv-study"], simulation=["sim1"],
                                         config=["sim1/config.yaml"])
         CSV.write(joinpath(root, "manifest.csv"), manifest)
-        table = JLD2.load(save_status_manifest(root), "manifest")
+        existing = readdir(root)
+        table = status_manifest(root)
+        @test readdir(root) == existing
         @test isequal(table[:, names(manifest)], manifest)
         @test table.status == ["No Log File"]
         @test table.completed_blocks == [0]
         @test table.failed == [false]
+        saved_table = status_manifest(root; save=true)
+        path = joinpath(root, only(setdiff(readdir(root), existing)))
+        @test isequal(saved_table, table)
+        @test isequal(JLD2.load(path, "manifest"), table)
     end
 end
 

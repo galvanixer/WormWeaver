@@ -127,21 +127,22 @@ function _study_status(root::AbstractString, manifest)
 end
 
 """
-    save_status_manifest(root) -> String
+    status_manifest(root; save=false) -> DataFrame
 
-Read the study manifest and current simulation logs, then save all manifest
+Read the study manifest and current simulation logs, then return all manifest
 columns with refreshed `status`, `completed_blocks`, and `failed` columns.
 Join on `(study_id, simulation)`, requiring nonblank study IDs and unique keys,
 and preserve manifest row order. Prefer `manifest.jld2`, falling back to CSV.
 
-Write `manifest_status_yyyymmdd_HHMMSS_sssZ.jld2` in the study directory and
-return its absolute path. The timestamp is UTC. Store the joined DataFrame
-under `manifest` and the capture-start time under `captured_at_utc`.
+By default, no files are written. With `save=true`, also write
+`manifest_status_yyyymmdd_HHMMSS_sssZ.jld2` in the study directory. The timestamp
+is UTC. Store the joined DataFrame under `manifest` and the capture-start time
+under `captured_at_utc`. The return value is the DataFrame in either mode.
 Existing files are never overwritten; a timestamp collision raises an error.
 Source manifests, configs, logs, and simulation outputs are not modified.
 This is a log-progress snapshot, not a running-process or failure-cause check.
 """
-function save_status_manifest(root::AbstractString)
+function status_manifest(root::AbstractString; save::Bool=false)
     root = abspath(root)
     captured_at_utc = Dates.now(Dates.UTC)
     manifest = _read_study_manifest(root)
@@ -156,12 +157,14 @@ function save_status_manifest(root::AbstractString)
     base = DataFrames.select(manifest, DataFrames.Not(intersect(names(manifest), string.(progress))))
     table = DataFrames.leftjoin(base, DataFrames.select(statuses, [keys; progress]);
                                 on=keys, validate=(true, true), order=:left)
-    timestamp = Dates.format(captured_at_utc, "yyyymmdd_HHMMSS_sss")
-    destination = joinpath(root, "manifest_status_$(timestamp)Z.jld2")
-    (ispath(destination) || islink(destination)) &&
-        throw(ArgumentError("status snapshot already exists: $destination; retry to use a new timestamp"))
-    JLD2.jldsave(destination; manifest=table, captured_at_utc)
-    return destination
+    if save
+        timestamp = Dates.format(captured_at_utc, "yyyymmdd_HHMMSS_sss")
+        destination = joinpath(root, "manifest_status_$(timestamp)Z.jld2")
+        (ispath(destination) || islink(destination)) &&
+            throw(ArgumentError("status snapshot already exists: $destination; retry to use a new timestamp"))
+        JLD2.jldsave(destination; manifest=table, captured_at_utc)
+    end
+    return table
 end
 
 """
