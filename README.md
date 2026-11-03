@@ -190,6 +190,8 @@ Metadata column names (`project`, `study_id`, `template`, `simulation`, `replica
 statuses = study_status(study_dir)
 # Include compute-node scratch logs for a running array:
 statuses = study_status(study_dir; arrayid=18523211, scratch_root="/scratch")
+# Discover arrays from temporary jobfile.<arrayid>.<index> files:
+statuses = study_status(study_dir; arrayid=:auto)
 ```
 
 Reads `manifest.jld2` and each simulation's log, returning
@@ -216,6 +218,16 @@ order are preserved, with `log_source` appended in both modes. A local fallback
 reports that log's progress and may not reflect a newer scratch attempt.
 CSV manifests are not read. Callers that already loaded the JLD2 manifest can
 pass `manifest=manifest` to reuse it without another file read.
+
+`arrayid=:auto` extracts and deduplicates array IDs from temporary
+`jobfile.<arrayid>.<index>` files directly inside the study directory. It uses
+one current-user, local-cluster Slurm queue snapshot to find their tasks; the
+filename task indices and file contents are ignored. Stale IDs are ignored,
+and only running tasks are inspected. With no candidates or running matches,
+the result uses local logs (or `"none"` for missing logs). An explicit ID
+overrides discovery. The original `jobfile`, directories, and `slurm*.out`
+files are not candidates. The launcher can keep its existing cleanup behavior;
+temporary-file absence does not prove that scratch data has been deleted.
 
 Use `study_log_status("/path/to/simulation.log")` to parse a single local log,
 or `study_log_status(IOBuffer(text))` to parse log text returned by
@@ -265,6 +277,8 @@ unfinished = snapshot[(snapshot.status .!= "Finished") .& .!snapshot.failed, :]
 snapshot = status_manifest(study_dir; save=true)  # Also save a snapshot.
 # Include running-array scratch logs and their source labels:
 snapshot = status_manifest(study_dir; arrayid=18523211, scratch_root="/scratch", save=true)
+# Or detect array IDs automatically:
+snapshot = status_manifest(study_dir; arrayid=:auto, save=true)
 ```
 
 The default `save=false` leaves the study directory unchanged. With `save=true`,

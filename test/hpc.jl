@@ -49,6 +49,15 @@ import JLD2
             withenv("SQUEUE_FAIL" => "1") do
                 @test_throws ProcessFailedException slurm_array_tasks(18523211)
             end
+            write(fixture, "18523211_2|18523213|RUNNING|hpc-n664\n" *
+                           "222_1|222|RUNNING|hpc-n937\n")
+            combined = slurm_array_tasks(["18523211_3", "222", "12345", "222"])
+            @test combined.task == ["222_1", "18523211_2"]
+            @test "--me" in readlines(arguments)
+            @test "--local" in readlines(arguments)
+            before = read(arguments)
+            @test DataFrames.nrow(slurm_array_tasks(String[])) == 0
+            @test read(arguments) == before
         end
     end
 end
@@ -218,6 +227,58 @@ end
                 local_statuses = study_status(study)
                 @test local_statuses.log_source == ["local", "local", "none", "none", "none"]
                 @test read(calls) == before_calls
+                @testset "Automatic array discovery" begin
+                    # No temporary files means local-only fallback, without Slurm.
+                    @test isequal(study_status(study; arrayid=:auto, scratch_root=scratch), local_statuses)
+                    @test DataFrames.nrow(find_scratch_logs(study, :auto; scratch_root=scratch)) == 0
+                    @test read(calls) == before_calls
+                    for name in ("jobfile.18523211.2", "jobfile.18523211.3", "jobfile.18523211.999",
+                                 "jobfile.12345.1", "jobfile", "jobfile.bad.1", "jobfile.222.1.bak",
+                                 "slurm-222_1.out", "slurm-222.out")
+                        write(joinpath(study, name), "contents are not used\n")
+                    end
+                    mkpath(joinpath(study, "jobfile.777.1")) # A directory is not a candidate.
+                    expected_logs = find_scratch_logs(study, 18523211; scratch_root=scratch)
+                    queries = count(==("squeue"), readlines(calls))
+                    auto_logs = find_scratch_logs(study, :auto; scratch_root=scratch)
+                    @test isequal(auto_logs, expected_logs)
+                    @test count(==("squeue"), readlines(calls)) == queries + 1
+                    @test isequal(study_status(study; arrayid=:auto, scratch_root=scratch), statuses)
+                    auto_snapshot = status_manifest(study; arrayid=:auto, scratch_root=scratch, save=true)
+                    @test auto_snapshot.log_source == snapshot.log_source
+                    @test auto_snapshot.status == snapshot.status
+                    snapshots = filter(startswith("manifest_status_"), readdir(study))
+                    @test length(snapshots) == 2
+                    newest = only(setdiff(snapshots, [basename(saved_path)]))
+                    @test isequal(JLD2.load(joinpath(study, newest), "manifest"), auto_snapshot)
+                    @test read(joinpath(study, "jobfile.18523211.999"), String) == "contents are not used\n"
+
+                    # A second array is discovered; explicit IDs still override it.
+                    write(queue, read(queue, String) * "222_1|222|RUNNING|hpc-n937\n")
+                    second_log = joinpath(scratch, "job.222", "sim99", "simulation.log")
+                    mkpath(dirname(second_log))
+                    write(second_log, "TUNING\n")
+                    write(joinpath(study, "jobfile.222.999"), "")
+                    second = study_status(study; arrayid=:auto, scratch_root=scratch)
+                    @test second.log_source[end] == "scratch"
+                    @test second.status[end] == "Tuning"
+                    @test isequal(study_status(study; arrayid=18523211, scratch_root=scratch), statuses)
+                    duplicate = joinpath(scratch, "job.222", "sim21", "simulation.log")
+                    mkpath(dirname(duplicate))
+                    write(duplicate, "TUNING\n")
+                    @test_throws ArgumentError study_status(study; arrayid=:auto, scratch_root=scratch)
+                    rm(joinpath(study, "jobfile.222.999"))
+                    withenv("HPC_FAIL_NODE" => "hpc-n664") do
+                        @test_throws ProcessFailedException study_status(study; arrayid=:auto, scratch_root=scratch)
+                    end
+                    # No current matches, or pending-only matches, use local logs.
+                    running_queue = read(queue, String)
+                    write(queue, "18523211_1|18523214|PENDING|\n")
+                    @test isequal(study_status(study; arrayid=:auto, scratch_root=scratch), local_statuses)
+                    write(queue, "222_1|222|RUNNING|hpc-n937\n")
+                    @test isequal(study_status(study; arrayid=:auto, scratch_root=scratch), local_statuses)
+                    write(queue, running_queue)
+                end
                 withenv("HPC_FAIL_NODE" => "hpc-n664") do
                     @test_throws ProcessFailedException study_status(study; arrayid=18523211, scratch_root=scratch)
                 end

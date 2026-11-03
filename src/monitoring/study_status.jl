@@ -105,6 +105,10 @@ of that array, preferring a unique scratch log for each simulation. Otherwise
 read the study-directory log. Multiple scratch matches and read failures raise
 errors. A task ID such as `"18523211_2"` inspects the whole array. Without
 `arrayid`, only study-directory logs are read and Slurm is not called.
+Set `arrayid=:auto` to discover unique array IDs from temporary
+`jobfile.<arrayid>.<index>` files in the study directory, then query Slurm for
+their current running tasks. Filename indices are ignored. With no candidates
+or no running matches, use local logs. Multiple matches still raise an error.
 
 `log_source` is `"scratch"` for a log read from a compute node, `"local"` for
 a study-directory log, or `"none"` when no log was found. A local fallback

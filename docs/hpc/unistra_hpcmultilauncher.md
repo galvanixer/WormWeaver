@@ -207,6 +207,8 @@ To locate existing scratch logs for simulations listed in the study manifest:
 logs = find_scratch_logs(study_dir, 18523211)
 # Optional custom scratch root; a task ID also inspects the whole array:
 logs = find_scratch_logs(study_dir, "18523211_2"; scratch_root="/scratch")
+# Discover array IDs from temporary jobfile chunks:
+logs = find_scratch_logs(study_dir, :auto)
 ```
 
 This returns `simulation`, `task`, `jobid`, `node`, and `log_path` in manifest
@@ -216,6 +218,19 @@ checks running allocations with one `srun` per allocation and node; missing
 logs are omitted and inspection failures raise errors. It only locates files:
 log contents and simulation status are not read. Existing launcher and copying
 behavior remain unchanged.
+
+Automatic discovery scans only files named `jobfile.<arrayid>.<index>` directly
+inside the study directory. It extracts and deduplicates the array IDs, then
+queries the current user's local Slurm queue once for their tasks. The filename
+indices and file contents are ignored: a file ending in `.2` can lead to
+inspection of all running tasks in its array. Stale candidate IDs and pending
+tasks are skipped. The original `jobfile` and `slurm*.out` files are not used.
+
+The launcher removes each temporary chunk after its assigned commands finish,
+but interruption can leave a stale file. Cleanup does not establish whether
+scratch data still exists; Slurm remains the source of allocation information.
+With no candidate files, discovery returns an empty table without calling
+Slurm. Explicit array/task IDs continue to bypass automatic discovery.
 
 Read one discovered log into a Julia string with:
 
@@ -241,6 +256,8 @@ To obtain one status row per manifest simulation, including scratch logs:
 
 ```julia
 statuses = study_status(study_dir; arrayid=18523211, scratch_root="/scratch")
+# The same collection works with automatic discovery:
+statuses = study_status(study_dir; arrayid=:auto)
 ```
 
 A unique scratch log takes precedence; simulations without one use their
@@ -255,10 +272,14 @@ parameters along with refreshed progress and `log_source`, use:
 snapshot = status_manifest(study_dir; arrayid=18523211, scratch_root="/scratch")
 # Save the same information in a new timestamped JLD2 snapshot:
 snapshot = status_manifest(study_dir; arrayid=18523211, save=true)
+# Or discover array IDs from temporary jobfile chunks:
+snapshot = status_manifest(study_dir; arrayid=:auto, save=true)
 ```
 
-Without `arrayid`, snapshots read only study-directory logs. All collection
-functions use the JLD2 manifest; source manifests and simulation files stay
+Without `arrayid`, snapshots read only study-directory logs.
+With `arrayid=:auto`, no candidates or running matches also falls back to
+study-directory logs. Multiple scratch matches still raise an ambiguity error.
+All collection functions use the JLD2 manifest; source manifests and simulation files stay
 unchanged. An already-loaded manifest is reused during scratch discovery.
 
 ### Terminal dashboard

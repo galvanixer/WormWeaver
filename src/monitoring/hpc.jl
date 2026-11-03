@@ -7,6 +7,8 @@ import JLD2
 Query `squeue` for all currently queued tasks in a Slurm array. Accept an array
 ID such as `18523211` or a task ID such as `"18523211_2"`; either queries the
 entire array. Run on an HPC host with `squeue` available and access to Slurm.
+An ID vector queries the current user's local queue once and returns matching
+arrays; IDs no longer queued are ignored. An empty vector makes no Slurm call.
 
 Return `task`, `index`, numeric allocation `jobid`, `state`, allocated `nodes`,
 and expected `scratch_dir`, sorted by array index. Node lists retain Slurm's
@@ -18,12 +20,21 @@ have no nodes, and their allocation details can change. Slurm command failures
 raise an error. No simulation files are read or modified.
 """
 function slurm_array_tasks(id; scratch_root::AbstractString="/scratch")
-    m = match(r"^(\d+)(?:_\d+)?$", strip(string(id)))
-    isnothing(m) &&
-        throw(ArgumentError("Expected an array ID or array_task ID"))
-    arrayid = m.captures[1]
+    arrayids = Set{String}()
+    for value in (id isa AbstractVector ? id : [id])
+        m = match(r"^(\d+)(?:_\d+)?$", strip(string(value)))
+        isnothing(m) && throw(ArgumentError("Expected an array ID or array_task ID"))
+        push!(arrayids, m.captures[1])
+    end
 
-    output = read(`squeue -h -r -j $arrayid -o "%i|%A|%T|%N"`, String)
+    # A queue snapshot avoids errors for stale temporary-jobfile IDs in auto mode.
+    output = if isempty(arrayids)
+        ""
+    elseif id isa AbstractVector
+        read(`squeue --me --local -h -r -o "%i|%A|%T|%N"`, String)
+    else
+        read(`squeue -h -r -j $(only(arrayids)) -o "%i|%A|%T|%N"`, String)
+    end
     table = DataFrames.DataFrame(
         task=String[], index=Int[], jobid=Int[], state=String[],
         nodes=Union{Missing,String}[], scratch_dir=String[])
@@ -32,7 +43,7 @@ function slurm_array_tasks(id; scratch_root::AbstractString="/scratch")
         task, jobid_text, state, nodes = strip.(split(line, '|'; limit=4))
         task_match = match(r"^(\d+)_(\d+)$", task)
         isnothing(task_match) && continue
-        task_match.captures[1] == arrayid || continue
+        task_match.captures[1] in arrayids || continue
 
         index = parse(Int, task_match.captures[2])
         jobid = parse(Int, jobid_text)
@@ -51,6 +62,12 @@ end
 Read `manifest.jld2` and locate its simulations'
 `simulation.log` files on running tasks of the given Slurm array. A task ID such
 as `"18523211_2"` also inspects the whole array. Run on the HPC login node.
+With `arrayid=:auto`, discover unique array IDs from temporary
+`jobfile.<arrayid>.<index>` files directly inside the study directory. Their
+task indices and contents are not used: Slurm supplies the current tasks.
+Ignore stale IDs and skip non-running tasks. With no candidate files, return
+an empty table without calling Slurm. The original `jobfile` and Slurm output
+files are not used for automatic discovery.
 
 Return `simulation`, `task`, numeric `jobid`, `node`, and `log_path`, in manifest
 simulation order. Keep every matching location when a simulation appears in
@@ -80,6 +97,16 @@ function find_scratch_logs(study_dir::AbstractString, arrayid;
                 name ∉ (".", "..") && !occursin(r"[/\x00]", name), manifest.simulation) ||
         throw(ArgumentError("manifest simulation names must be single directory components"))
     simulations = unique(String.(manifest.simulation))
+    if arrayid === :auto
+        ids = Set{String}()
+        for name in readdir(study_dir)
+            m = match(r"^jobfile\.(\d+)\.\d+$", name)
+            if m !== nothing && isfile(joinpath(study_dir, name))
+                push!(ids, m.captures[1])
+            end
+        end
+        arrayid = sort!(collect(ids))
+    end
     tasks = slurm_array_tasks(arrayid; scratch_root)
     table = DataFrames.DataFrame(simulation=String[], task=String[], jobid=Int[],
                                  node=String[], log_path=String[])
