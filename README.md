@@ -224,10 +224,16 @@ or `study_log_status(IOBuffer(text))` to parse log text returned by
 Use `status_summary(statuses)` to count simulations for each combination of
 `lattice_size`, `beta`, `status`, and `failed`. The returned count column is
 `n_simulations`; failed runs remain separate from other runs at the same stage.
+When present, `log_source` is also included in the grouping, separating scratch,
+local, and absent logs at the same stage. Tables without it retain the original
+grouping.
 Before returning the table, it prints the total number of simulations, how many
 finished successfully, how many failed, and how many are left. Runs left have
 neither finished successfully nor failed. Use `io` to redirect this output,
 for example `status_summary(statuses; io=devnull)` to suppress the totals.
+For tables with `log_source`, the totals also include `Scratch logs`,
+`Local logs`, and `No log found`. These counts describe log locations and
+do not establish whether the simulation processes are running.
 
 Get a manifest with current progress for inspecting simulations midway:
 

@@ -34,6 +34,26 @@ import JLD2
                                    failed=[false, true, false])
     status_summary(terminal; io)
     @test String(take!(io)) == "Total simulations: 3\nFinished successfully: 1\nFailed: 1\nLeft: 1\n\n"
+
+    sourced = copy(df)
+    sourced.log_source = ["scratch", "local", "scratch", "scratch", "local",
+                          "local", "scratch", "none", "none"]
+    original = deepcopy(sourced)
+    summary = status_summary(sourced; io)
+    @test String(take!(io)) == "Total simulations: 9\nFinished successfully: 5\n" *
+          "Failed: 1\nLeft: 3\nScratch logs: 4\nLocal logs: 3\nNo log found: 2\n\n"
+    @test names(summary) == ["lattice_size", "beta", "status", "failed", "log_source", "n_simulations"]
+    @test summary.n_simulations == [1, 1, 1, 1, 1, 1, 1, 2]
+    @test isequal(summary[:, 1:5], sourced[1:8, :])
+    @test sum(summary.n_simulations) == DataFrames.nrow(sourced)
+    @test isequal(sourced, original)
+
+    empty = status_summary(sourced[1:0, :]; io)
+    @test String(take!(io)) == "Total simulations: 0\nFinished successfully: 0\n" *
+          "Failed: 0\nLeft: 0\nScratch logs: 0\nLocal logs: 0\nNo log found: 0\n\n"
+    @test DataFrames.nrow(empty) == 0
+    @test names(empty) == names(summary)
+    @test eltype(empty.n_simulations) == Int
 end
 
 @testset "Status manifest and optional snapshots" begin

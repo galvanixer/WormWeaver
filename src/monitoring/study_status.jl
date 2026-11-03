@@ -218,30 +218,41 @@ end
     status_summary(df::AbstractDataFrame; io=stdout) -> DataFrame
 
 Summarize a `study_status` table by `lattice_size`, `beta`, `status`, and `failed`,
-with a count column named `n_simulations`. Failed runs remain separate from
+also grouping by `log_source` when present, with a count column named
+`n_simulations`. Failed runs remain separate from
 other runs at the same stage. Only observed combinations are returned, in order
 of first appearance; missing lattice sizes or beta values are retained.
 Print the total number of simulations, successful finishes, failures, and runs
 left before returning the grouped table. Successful runs have `status="Finished"`
 and `failed=false`; failures take precedence. Runs left are neither successful
 nor failed, regardless of whether their processes are currently running.
+When `log_source` is present, also print counts of scratch logs, local logs,
+and simulations with no log found. Sources describe where logs were read,
+not whether simulations are currently running. Tables without `log_source`
+retain the original grouping and printed totals.
 Use `io` to redirect this output. The input table is not modified.
 """
 function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout)
     columns = [:lattice_size, :beta, :status, :failed]
     all(column -> hasproperty(df, column), columns) ||
         throw(ArgumentError("status table must contain lattice_size, beta, status, and failed"))
+    has_source = hasproperty(df, :log_source)
+    has_source && push!(columns, :log_source)
     summary = DataFrames.combine(DataFrames.groupby(df, columns; sort=false),
                                  DataFrames.nrow => :n_simulations)
     total = DataFrames.nrow(df)
     failed = count(identity, df.failed)
     finished = count(row -> row.status == "Finished" && !row.failed, eachrow(df))
     left = total - finished - failed
-    println()
     println(io, "Total simulations: ", total)
     println(io, "Finished successfully: ", finished)
     println(io, "Failed: ", failed)
     println(io, "Left: ", left)
+    if has_source
+        println(io, "Scratch logs: ", count(isequal("scratch"), df.log_source))
+        println(io, "Local logs: ", count(isequal("local"), df.log_source))
+        println(io, "No log found: ", count(isequal("none"), df.log_source))
+    end
     println(io)
     return summary
 end
