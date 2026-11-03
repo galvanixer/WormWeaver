@@ -1,4 +1,5 @@
 import CSV
+import Dates
 import DataFrames
 import JLD2
 
@@ -35,6 +36,86 @@ import JLD2
     @test String(take!(io)) == "Total simulations: 3\nFinished successfully: 1\nFailed: 1\nLeft: 1\n\n"
 end
 
+@testset "Status manifest snapshots" begin
+    mktempdir() do root
+        # Reused simulation labels require both key columns, not simulation alone.
+        manifest = DataFrames.DataFrame(
+            study_id=["study-b", "study-a", "study-a"],
+            simulation=["sim1", "sim1", "sim2"],
+            config=["job-b/config.yaml", "job-a/config.yaml", "pending/config.yaml"],
+            status=fill("stale", 3), failed=trues(3), completed_blocks=fill(-1, 3))
+        manifest[!, "lattice.extent"] = [[16, 16], [32], [64]]
+        manifest[!, "system.beta"] = [8.0, 16.0, 32.0]
+        manifest[!, "custom.settings"] = [Dict("weights" => [1, 2]) for _ in 1:3]
+        native = joinpath(root, "manifest.jld2")
+        JLD2.jldsave(native; manifest)
+        # A conflicting CSV must not replace the native manifest.
+        csv = joinpath(root, "manifest.csv")
+        CSV.write(csv, DataFrames.DataFrame(study_id=["ignored"], simulation=["ignored"],
+                                          config=["ignored/config.yaml"]))
+        for folder in ("job-b", "job-a")
+            mkpath(joinpath(root, folder))
+            write(joinpath(root, folder, "config.yaml"), "preserved config\n")
+        end
+        failed_log = joinpath(root, "job-b", "simulation.log")
+        success_log = joinpath(root, "job-a", "simulation.log")
+        write(failed_log, "TUNING\nSimulation failed: tuning exhausted\n")
+        write(success_log, "PRODUCTION\n  100/100 100% 1.000s ◆\nSUMMARY\n  Status SUCCESS\n")
+        sources = [native, csv, failed_log, success_log,
+                   joinpath(root, "job-b", "config.yaml"), joinpath(root, "job-a", "config.yaml")]
+        original = read.(sources)
+
+        before = Dates.now(Dates.UTC)
+        path = save_status_manifest(root)
+        saved = JLD2.load(path)
+        table = saved["manifest"]
+        @test isabspath(path) && dirname(path) == root
+        @test occursin(r"^manifest_status_\d{8}_\d{6}_\d{3}Z\.jld2$", basename(path))
+        @test before <= saved["captured_at_utc"] <= Dates.now(Dates.UTC)
+        @test basename(path) == "manifest_status_" *
+              Dates.format(saved["captured_at_utc"], "yyyymmdd_HHMMSS_sss") * "Z.jld2"
+        parameters = DataFrames.Not([:status, :completed_blocks, :failed])
+        @test isequal(table[:, parameters], manifest[:, parameters])
+        @test table.status == ["Tuning", "Finished", "No Log File"]
+        @test table.completed_blocks == [0, 100, 0]
+        @test table.failed == [true, false, false]
+        @test read.(sources) == original
+
+        # A later snapshot reflects new progress and preserves the old snapshot.
+        snapshot_bytes = read(path)
+        write(failed_log, "MultiWormQMC v0.2.0\nPRODUCTION\n  25/100 25% 1.000s ◆\n")
+        next_path = save_status_manifest(root)
+        @test next_path != path
+        @test read(path) == snapshot_bytes
+        refreshed = JLD2.load(next_path, "manifest")
+        @test refreshed.status[1] == "Checkpoint 1"
+        @test refreshed.completed_blocks[1] == 25
+        @test !refreshed.failed[1]
+
+        # Missing IDs and duplicate composite keys must not produce snapshots.
+        existing = sort(readdir(root))
+        for invalid in (DataFrames.select(manifest, DataFrames.Not(:study_id)),
+                        DataFrames.transform(manifest, :study_id => (_ -> ["", "study-a", "study-a"]) => :study_id),
+                        DataFrames.transform(manifest, :study_id => (_ -> [missing, "study-a", "study-a"]) => :study_id),
+                        vcat(manifest, manifest[1:1, :]))
+            JLD2.jldsave(native; manifest=invalid)
+            @test_throws ArgumentError save_status_manifest(root)
+            @test sort(readdir(root)) == existing
+        end
+    end
+
+    mktempdir() do root
+        manifest = DataFrames.DataFrame(study_id=["csv-study"], simulation=["sim1"],
+                                        config=["sim1/config.yaml"])
+        CSV.write(joinpath(root, "manifest.csv"), manifest)
+        table = JLD2.load(save_status_manifest(root), "manifest")
+        @test isequal(table[:, names(manifest)], manifest)
+        @test table.status == ["No Log File"]
+        @test table.completed_blocks == [0]
+        @test table.failed == [false]
+    end
+end
+
 @testset "Study status" begin
     mktempdir() do root
         # Deliberately use folders different from the simulation labels.
@@ -53,6 +134,7 @@ end
             "PRODUCTION\n  100/100 100% 1.000s ◆\nFINALIZATION\nERROR: finalization failed\n",
         ]
         manifest = DataFrames.DataFrame(
+            study_id=fill("67db9eed-b978-47f7-a90f-e6604b195df5", length(logs)),
             simulation=["sim$i" for i in eachindex(logs)],
             config=["job$i/config.yaml" for i in eachindex(logs)])
         manifest[!, "lattice.extent"] = [[64] for _ in logs]
@@ -68,11 +150,12 @@ end
         sources = [path; [joinpath(root, "job$i", "simulation.log") for i in 2:length(logs)]]
         original = read.(sources)
         table = study_status(root)
-        @test names(table) == ["simulation", "lattice_size", "beta", "status", "completed_blocks", "failed"]
+        @test names(table) == ["study_id", "simulation", "lattice_size", "beta", "status", "completed_blocks", "failed"]
+        @test table.study_id == manifest.study_id
         @test table.simulation == manifest.simulation
         @test table.lattice_size == fill([64], length(logs))
         @test table.beta == fill(64.0, length(logs))
-        @test table.status == ["Pre Tuning", "Pre Tuning", "Tuning", "Thermalizing",
+        @test table.status == ["No Log File", "Pre Tuning", "Tuning", "Thermalizing",
                                "Production Started", "Checkpoint 1", "Checkpoint 2",
                                "Checkpoint 3", "Checkpoint 4", "Finished", "Tuning", "Checkpoint 4"]
         @test table.completed_blocks == [0, 0, 0, 0, 25, 48, 50, 75, 100, 100, 0, 100]
@@ -105,20 +188,26 @@ end
 
     mktempdir() do root
         @test_throws ArgumentError study_status(root)
-        manifest = DataFrames.DataFrame(simulation=["custom"], config=["nested/config.yaml"])
+        manifest = DataFrames.DataFrame(study_id=["1cbbd8cf-b1aa-48ad-a822-ea3ac9df77b0"],
+                                        simulation=["custom"], config=["nested/config.yaml"])
         manifest[!, "lattice.extent"] = ["- 16\n- 16"]
         manifest[!, "system.beta"] = [8.0]
         CSV.write(joinpath(root, "manifest.csv"), manifest)
         table = study_status(root)
+        @test table.study_id == manifest.study_id
         @test table.lattice_size == [[16, 16]]
         @test table.beta == [8.0]
-        @test table.status == ["Pre Tuning"]
+        @test table.status == ["No Log File"]
 
         # The typed manifest takes precedence; optional metadata may be absent.
         DataFrames.select!(manifest, :simulation, :config)
         JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        @test ismissing(study_status(root).study_id[1])
         @test ismissing(study_status(root).lattice_size[1])
         @test ismissing(study_status(root).beta[1])
+        manifest.study_id = [nothing]
+        JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
+        @test ismissing(study_status(root).study_id[1])
         manifest.config = [missing]
         JLD2.jldsave(joinpath(root, "manifest.jld2"); manifest)
         @test_throws ArgumentError study_status(root)

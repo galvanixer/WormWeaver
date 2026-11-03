@@ -191,12 +191,17 @@ statuses = study_status(study_dir)
 ```
 
 Reads the typed manifest (falling back to CSV) and each simulation's log, returning
-`simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`, and `failed`.
+`study_id`, `simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`,
+and `failed`. Join with the manifest using `on=[:study_id, :simulation]` to
+identify simulations across generated studies. For older or custom manifests
+without a study ID, `study_id` is `missing`.
 Lattice sizes remain arrays, such as `[64]` or `[16, 16]`.
 Statuses advance from `Pre Tuning`, `Tuning`, `Thermalizing`, and
 `Production Started` through `Checkpoint 1`–`Checkpoint 4` to `Finished`.
+`No Log File` means the simulation's log is absent. `Pre Tuning` means the
+simulation has started logging but tuning has not started.
 Checkpoint stages reflect saved checkpoints; `Finished` requires a success summary.
-Failures retain their last stage with `failed=true`. Missing logs are `Pre Tuning`;
+Failures retain their last stage with `failed=true`;
 `failed=false` does not establish that a process is running. This function only
 reads the files and does not modify the manifest, logs, or simulation outputs.
 
@@ -207,6 +212,27 @@ Before returning the table, it prints the total number of simulations, how many
 finished successfully, how many failed, and how many are left. Runs left have
 neither finished successfully nor failed. Use `io` to redirect this output,
 for example `status_summary(statuses; io=devnull)` to suppress the totals.
+
+Save a manifest with current progress for inspecting simulations midway:
+
+```julia
+snapshot_path = save_status_manifest(study_dir)
+snapshot = JLD2.load(snapshot_path, "manifest")
+failed_runs = snapshot[snapshot.failed, :]
+unfinished = snapshot[(snapshot.status .!= "Finished") .& .!snapshot.failed, :]
+```
+
+This writes a new file such as `manifest_status_20261103_143012_123Z.jld2`
+in the study directory. The filename timestamp and stored `captured_at_utc`
+capture-start time use UTC. All manifest parameters are preserved, with
+`status`, `completed_blocks`, and `failed` added or refreshed by joining on
+`(study_id, simulation)`. Keys must be unique and study IDs nonblank.
+The function prefers the native manifest, falls back to CSV, and returns the
+absolute snapshot path. Original files and earlier snapshots are not changed;
+a filename collision raises an error. Compare snapshots to inspect progress
+over time, then use each row's `config` directory to locate `simulation.log`
+for failure details. Unfinished runs can be running, stalled, or not yet started;
+the snapshot alone cannot distinguish these cases.
 
 ### Sweep ordering
 

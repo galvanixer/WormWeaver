@@ -16,6 +16,6 @@ include("aggregation/aggregate.jl")
 include("aggregation/observable_table.jl")
 
 export generate_study, init_study, init_config, aggregate, observable_table
-export green_ratio_statistics, study_status, status_summary
+export green_ratio_statistics, study_status, status_summary, save_status_manifest
 
 end

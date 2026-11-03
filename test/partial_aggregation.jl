@@ -51,7 +51,7 @@
         @test isequal(table[:, names(manifest)], manifest)
         @test table.status == ["Pre Tuning", "Tuning", "Production Started", "Checkpoint 2",
                                "Finished", "Production Started", "Production Started",
-                               "Production Started", "Pre Tuning"]
+                               "Production Started", "No Log File"]
         @test table.failed == [false, true, false, false, false, true, false, false, false]
         @test table.completed_blocks == [0, 0, 1, 2, 4, 1, 1, 1, 0]
         for name in ("Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction")

@@ -1,4 +1,5 @@
 import CSV
+import Dates
 import DataFrames
 import JLD2
 import YAML
@@ -13,7 +14,7 @@ end
 function _study_log_status(path::AbstractString)
     status, completed_blocks, failed = "Pre Tuning", 0, false
     production, target = false, 0
-    isfile(path) || return (; status, completed_blocks, failed)
+    isfile(path) || return (; status="No Log File", completed_blocks, failed)
 
     for line in eachline(path)
         line = strip(line)
@@ -65,32 +66,39 @@ end
 
 Read `manifest.jld2` (or `manifest.csv` if absent) and scan each simulation's
 `simulation.log`, located beside its manifest `config` path. Return columns
-`simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`, and `failed`,
-in manifest order. Lattice sizes remain arrays, including for a 1D lattice.
+`study_id`, `simulation`, `lattice_size`, `beta`, `status`, `completed_blocks`,
+and `failed`, in manifest order. The manifest's `study_id` and `simulation`
+together identify a simulation across generated studies. Lattice sizes remain
+arrays, including for a 1D lattice.
 
-Statuses are `Pre Tuning`, `Tuning`, `Thermalizing`, `Production Started`,
+Statuses are `No Log File`, `Pre Tuning`, `Tuning`, `Thermalizing`, `Production Started`,
 `Checkpoint 1` through `Checkpoint 4`, and `Finished`. Checkpoints require a
 saved-checkpoint marker or restored checkpoint evidence; `Finished` requires a
 success summary. A failure retains its last stage and sets `failed=true`.
 For appended logs, only the latest run is reported.
 
-Missing logs are `Pre Tuning`; missing lattice size or beta is `missing`.
+Missing logs are `No Log File`. `Pre Tuning` means the simulation has started
+logging but tuning has not started. Absent or null study ID, lattice size, or
+beta values are `missing`.
 Unreadable logs raise an error. This read-only snapshot does not determine
 whether a process is currently running; `failed=false` only means no explicit
 failure was found in the log. Results and checkpoint files are not opened.
 """
 function study_status(root::AbstractString)
     root = abspath(root)
+    return _study_status(root, _read_study_manifest(root))
+end
+
+function _read_study_manifest(root::AbstractString)
     native = joinpath(root, "manifest.jld2")
     csv = joinpath(root, "manifest.csv")
-    manifest = if isfile(native)
+    return if isfile(native)
         JLD2.load(native, "manifest")
     elseif isfile(csv)
         CSV.read(csv, DataFrames.DataFrame)
     else
         throw(ArgumentError("no manifest.jld2 or manifest.csv found in $root"))
     end
-    return _study_status(root, manifest)
 end
 
 # Reuse the manifest snapshot already loaded by aggregation.
@@ -100,7 +108,8 @@ function _study_status(root::AbstractString, manifest)
     all(name -> name in names(manifest), ("simulation", "config")) ||
         throw(ArgumentError("manifest must contain simulation and config"))
 
-    table = DataFrames.DataFrame(simulation=String[], lattice_size=Any[], beta=Any[],
+    table = DataFrames.DataFrame(study_id=Union{Missing,String}[], simulation=String[],
+                                lattice_size=Any[], beta=Any[],
                                 status=String[], completed_blocks=Int[], failed=Bool[])
     for row in eachrow(manifest)
         row.simulation isa AbstractString && !isempty(strip(row.simulation)) &&
@@ -109,11 +118,50 @@ function _study_status(root::AbstractString, manifest)
             throw(ArgumentError("each manifest row must have a simulation name and config path"))
         folder = dirname(joinpath(root, row.config))
         progress = _study_log_status(joinpath(folder, "simulation.log"))
-        push!(table, (; simulation=String(row.simulation),
+        push!(table, (; study_id=_status_metadata(row, "study_id"),
+                      simulation=String(row.simulation),
                       lattice_size=_status_metadata(row, "lattice.extent"; yaml=true),
                       beta=_status_metadata(row, "system.beta"), progress...))
     end
     return table
+end
+
+"""
+    save_status_manifest(root) -> String
+
+Read the study manifest and current simulation logs, then save all manifest
+columns with refreshed `status`, `completed_blocks`, and `failed` columns.
+Join on `(study_id, simulation)`, requiring nonblank study IDs and unique keys,
+and preserve manifest row order. Prefer `manifest.jld2`, falling back to CSV.
+
+Write `manifest_status_yyyymmdd_HHMMSS_sssZ.jld2` in the study directory and
+return its absolute path. The timestamp is UTC. Store the joined DataFrame
+under `manifest` and the capture-start time under `captured_at_utc`.
+Existing files are never overwritten; a timestamp collision raises an error.
+Source manifests, configs, logs, and simulation outputs are not modified.
+This is a log-progress snapshot, not a running-process or failure-cause check.
+"""
+function save_status_manifest(root::AbstractString)
+    root = abspath(root)
+    captured_at_utc = Dates.now(Dates.UTC)
+    manifest = _read_study_manifest(root)
+    statuses = _study_status(root, manifest)
+    hasproperty(manifest, :study_id) &&
+        all(id -> id isa AbstractString && !isempty(strip(id)), manifest.study_id) ||
+        throw(ArgumentError("manifest must contain a nonblank study_id for every simulation"))
+
+    keys = [:study_id, :simulation]
+    progress = [:status, :completed_blocks, :failed]
+    # Refresh any previous status columns without duplicating parameter aliases.
+    base = DataFrames.select(manifest, DataFrames.Not(intersect(names(manifest), string.(progress))))
+    table = DataFrames.leftjoin(base, DataFrames.select(statuses, [keys; progress]);
+                                on=keys, validate=(true, true), order=:left)
+    timestamp = Dates.format(captured_at_utc, "yyyymmdd_HHMMSS_sss")
+    destination = joinpath(root, "manifest_status_$(timestamp)Z.jld2")
+    (ispath(destination) || islink(destination)) &&
+        throw(ArgumentError("status snapshot already exists: $destination; retry to use a new timestamp"))
+    JLD2.jldsave(destination; manifest=table, captured_at_utc)
+    return destination
 end
 
 """
