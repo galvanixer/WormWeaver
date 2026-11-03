@@ -185,7 +185,6 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
         isempty(color) || print(io, reset)
         println(io)
     end
-    println(io, "Log-derived progress; not Slurm job state.")
 
     for (section, column_widths) in zip(sections, widths)
         println(io, "\n", section.title)
@@ -213,6 +212,7 @@ function status_summary(df::DataFrames.AbstractDataFrame; io::IO=stdout, detaile
             println(io)
         end
     end
+    println(io, "\nNOTE: Progress is based on logs, not Slurm job state.")
     println(io)
     return data.summary
 end

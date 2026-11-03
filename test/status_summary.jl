@@ -63,7 +63,7 @@ import DataFrames
     @test occursin(r"Local\s+Scratch\s+No log\s+Total", text)
     @test occursin("Failed (Tuning)", text)
     @test occursin("Failed (Thermalizing)", text)
-    @test occursin("Log-derived progress; not Slurm job state.", text)
+    @test endswith(text, "\nNOTE: Progress is based on logs, not Slurm job state.\n\n")
     @test isequal(status_summary(df; io, detailed=false), expected)
     compact = String(take!(io))
     @test occursin("PROGRESS BY PARAMETERS", compact)
