@@ -430,8 +430,11 @@ Measurements.uncertainty.(density)  # Repeated-blocking standard errors.
 energy = table.Energy[1]["totalEnergy"]         # Scalar mean ± uncertainty.
 windings = table.Windings[1]["squaredWindingBySpecies"]  # Species × spatial axis.
 
-# Select a subset; output=nothing only returns the table:
-density_table = aggregate(study_dir; observables=["Density"], output=nothing)
+# Select a subset (aggregation does not write files):
+density_table = aggregate(study_dir; observables=["Density"])
+
+# Aggregate and save the table:
+table = save_aggregate(study_dir)
 
 # Read the saved table later:
 table = JLD2.load(joinpath(study_dir, "aggregated.jld2"), "aggregate")
@@ -441,12 +444,15 @@ table = JLD2.load(joinpath(study_dir, "aggregated.jld2"), "aggregate")
 `"Density"`, `"Energy"`, `"Windings"`, `"ParticlesHistogram"`, and
 `"SingleParticleGreenFunction"`. All five are
 selected by default. Each selected observable adds a dictionary column.
-The table also includes `status`, `failed`, and `completed_blocks` from
-`study_status`. The manifest must contain `simulation`, `config`, `output_file`,
-and `run.blocks`. Existing manifest columns with selected observable names or
-these status column names are rejected.
+Aggregation obtains its manifest directly from `status_manifest(study_dir)`,
+including refreshed `status`, `completed_blocks`, `failed`, and `log_source`
+columns from local logs. Existing progress columns are refreshed in memory;
+the source manifest is not modified and no monitoring snapshot is saved.
+The manifest must contain `study_id`, `simulation`, `config`, `output_file`,
+and `run.blocks`, with nonblank study IDs and unique `(study_id, simulation)`
+keys. Existing manifest columns with selected observable names are rejected.
 
-Aggregation first checks the logs using `study_status` and skips simulations
+Aggregation uses this refreshed manifest to skip simulations
 with zero completed production blocks. Every simulation retains its manifest
 row; skipped runs have missing observable summaries. Missing logs count as zero
 completed blocks. Failed runs with saved
@@ -485,7 +491,7 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
 Select only Green-function aggregation:
 
 ```julia
-table = aggregate(study_dir; observables=["SingleParticleGreenFunction"], output=nothing)
+table = aggregate(study_dir; observables=["SingleParticleGreenFunction"])
 green = observable_table(table.SingleParticleGreenFunction)
 green.gREqualTimeHits[1]      # Species × signed displacement, summed over blocks.
 green.zSectorVisitCount[1]   # Total closed-sector visits.
@@ -592,7 +598,7 @@ To aggregate particle histograms and expand the summaries into a table:
 
 ```julia
 table = aggregate(study_dir; observables=["ParticlesHistogram"],
-    blocking_diagnostics=true, output=nothing)
+    blocking_diagnostics=true)
 histograms = observable_table(table.ParticlesHistogram)
 species_counts = histograms.particleNumberBySpeciesCounts[1]  # Species × bin.
 total_counts = histograms.totalParticleNumberCounts[1]         # Bin vector.
@@ -708,7 +714,7 @@ reliable joint errors on variance or compressibility.
 
 Independent runs remain separate rows. Original HDF5 block histories remain
 unchanged, and existing saved aggregates are refreshed only by explicitly calling
-`aggregate` (with `overwrite=true` if the output already exists).
+`save_aggregate` (with `overwrite=true` if the output already exists).
 
 To turn an observable's dictionary column into its own DataFrame:
 
@@ -739,11 +745,23 @@ single-block history retains its mean with a NaN uncertainty. The maximum-error
 rule does not certify an error plateau. Component uncertainties do not reconstruct
 covariance; use directly aggregated totals and saved squares for their errors.
 
-The function returns the DataFrame and saves `aggregated.jld2` in the study
-directory. Use `output=nothing` to only return the table, or specify another
-output path (relative to the study directory unless absolute). Existing output
-files require `overwrite=true`; source manifests, configs, logs, and results are
-protected from replacement.
+`aggregate` returns the DataFrame without writing files. To aggregate and save,
+use `save_aggregate`, which calls `aggregate`, writes `aggregated.jld2` in the
+study directory, and returns the same DataFrame:
+
+```julia
+table = aggregate(study_dir)  # In memory only.
+table = save_aggregate(study_dir)  # Aggregate and save.
+table = save_aggregate(study_dir; overwrite=true)  # Refresh an existing file.
+table = save_aggregate(study_dir; observables=["Density", "Energy"],
+    min_blocks=10, blocking_diagnostics=true, output="analysis/summary.jld2")
+```
+
+Calculation options (`observables`, `min_blocks`, and `blocking_diagnostics`)
+work with both functions. Only `save_aggregate` accepts `output` and `overwrite`.
+Output paths are relative to the study directory unless absolute. Existing files
+require `overwrite=true`; source configs, logs, and results are protected from
+replacement. The JLD2 table is stored under the `aggregate` key.
 
 Missing results, absent selected groups, and empty observable histories retain
 their manifest rows with missing cells and warnings. Nonempty partial histories

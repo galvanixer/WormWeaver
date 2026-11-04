@@ -7,6 +7,9 @@ import JLD2
 # the status precheck. Tests of specific statuses write their own logs instead.
 function write_aggregation_manifest(path; manifest)
     n = DataFrames.nrow(manifest)
+    if !hasproperty(manifest, :study_id)
+        manifest.study_id = fill("aggregation-fixture", n)
+    end
     if !hasproperty(manifest, :simulation)
         manifest.simulation = ["sim$i" for i in 1:n]
     end
@@ -163,8 +166,11 @@ end
         sources = [path, manifest_path, joinpath(root, "config.yaml"), joinpath(root, "manifest.csv")]
         original_bytes = read.(sources)
 
+        before_files = readdir(root)
         table = aggregate(root; min_blocks=2)
-        @test names(table) == [names(manifest); ["status", "failed", "completed_blocks"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"]]
+        @test readdir(root) == before_files
+        @test isequal(aggregate(root; min_blocks=2), table)
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"]]
         @test ismissing(table.SingleParticleGreenFunction[1])
         @test isequal(table[:, names(manifest)], manifest)
         @test table.Density[1]["species"] == [1, 2]
@@ -203,48 +209,50 @@ end
         @test expanded.nsamples == [4000]
         @test table.ParticlesHistogram[1]["zSectorSampleCount"] == 6
 
+        written = save_aggregate(root; min_blocks=2)
+        @test isequal(written, table)
         saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
         @test isequal(saved, table)
         @test read.(sources) == original_bytes
-        @test_throws ArgumentError aggregate(root)
-        @test isequal(aggregate(root; min_blocks=2, overwrite=true), table)
-        subset = aggregate(root; observables=("Windings", "Energy"), output=nothing)
-        @test names(subset) == [names(manifest); ["status", "failed", "completed_blocks"]; ["Windings", "Energy"]]
+        @test_throws ArgumentError save_aggregate(root)
+        @test isequal(save_aggregate(root; min_blocks=2, overwrite=true), table)
+        subset = aggregate(root; observables=("Windings", "Energy"))
+        @test names(subset) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Windings", "Energy"]]
         custom_output = joinpath(root, "nested", "custom.jld2")
-        aggregate(root; observables=["Energy"], output=custom_output)
-        @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["status", "failed", "completed_blocks"]; ["Energy"]]
-        for source in sources
-            @test_throws ArgumentError aggregate(root; output=source, overwrite=true)
+        save_aggregate(root; observables=["Energy"], output=custom_output)
+        @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Energy"]]
+        for source in (path, joinpath(root, "config.yaml"))
+            @test_throws ArgumentError save_aggregate(root; output=source, overwrite=true)
         end
         symlink(path, joinpath(root, "alias.h5"))
-        @test_throws ArgumentError aggregate(root; output="alias.h5", overwrite=true)
+        @test_throws ArgumentError save_aggregate(root; output="alias.h5", overwrite=true)
         symlink(joinpath(root, "new.jld2"), joinpath(root, "dangling.jld2"))
-        @test_throws ArgumentError aggregate(root; output="dangling.jld2", overwrite=true)
-        @test_throws ArgumentError aggregate(root; output="nested", overwrite=true)
-        @test_throws ArgumentError aggregate(root; output=" ")
+        @test_throws ArgumentError save_aggregate(root; output="dangling.jld2", overwrite=true)
+        @test_throws ArgumentError save_aggregate(root; output="nested", overwrite=true)
+        @test_throws ArgumentError save_aggregate(root; output=" ")
         @test read.(sources) == original_bytes
 
         for selection in (String[], ["Density", "Density"], ["Unknown"], [1], "Density", nothing)
-            @test_throws ArgumentError aggregate(root; observables=selection, output=nothing)
+            @test_throws ArgumentError aggregate(root; observables=selection)
         end
-        @test_throws ArgumentError aggregate(root; min_blocks=1, output=nothing)
+        @test_throws ArgumentError aggregate(root; min_blocks=1)
         manifest[!, "Energy"] = [missing]
         write_aggregation_manifest(manifest_path; manifest)
-        @test_throws ArgumentError aggregate(root; output=nothing)
-        @test "Density" in names(aggregate(root; observables=["Density"], output=nothing))
+        @test_throws ArgumentError aggregate(root)
+        @test "Density" in names(aggregate(root; observables=["Density"]))
         DataFrames.select!(manifest, DataFrames.Not("Energy"))
         write_aggregation_manifest(manifest_path; manifest)
 
         # Each observable uses its own available blocks, regardless of the log.
         write_combined_fixture(path; density_blocks=2)
-        partial = @test_logs (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
+        partial = @test_logs (:warn, r"SingleParticleGreenFunction was not found") aggregate(root)
         @test partial.Density[1]["nblocks"] == 2
         @test Measurements.value.(partial.Density[1]["densityBySpecies"]) == [0, 1]
         @test !ismissing(partial.Energy[1])
         @test !ismissing(partial.Windings[1])
         @test !ismissing(partial.ParticlesHistogram[1])
         write_combined_fixture(path; groups=("Energy",))
-        absent = @test_logs (:warn, r"Density was not found") (:warn, r"Windings was not found") (:warn, r"ParticlesHistogram was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
+        absent = @test_logs (:warn, r"Density was not found") (:warn, r"Windings was not found") (:warn, r"ParticlesHistogram was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root)
         @test ismissing(absent.Density[1]) && ismissing(absent.Windings[1])
         @test !ismissing(absent.Energy[1])
         @test ismissing(absent.ParticlesHistogram[1])
@@ -252,7 +260,7 @@ end
         missing_manifest = DataFrames.DataFrame(output_file=[missing, "missing.h5"])
         missing_manifest[!, "run.blocks"] = [4, 4]
         write_aggregation_manifest(manifest_path; manifest=missing_manifest)
-        absent_files = @test_logs (:warn, r"No results path") (:warn, r"Results file is missing") aggregate(root; output=nothing)
+        absent_files = @test_logs (:warn, r"No results path") (:warn, r"Results file is missing") aggregate(root)
         @test DataFrames.nrow(absent_files) == 2
         @test all(ismissing, absent_files.Density)
         @test all(ismissing, absent_files.Energy)
@@ -261,7 +269,7 @@ end
         write_aggregation_manifest(manifest_path; manifest)
 
         write_combined_fixture(path; nspecies=1, legacy=true)
-        single = aggregate(root; output=nothing).Windings[1]
+        single = aggregate(root).Windings[1]
         @test size(single["windingBySpecies"]) == (1, 2)
         @test !haskey(single, "windingCorrelationBySpecies")
         @test size(single["species_pairs"]) == (0, 2)
@@ -288,8 +296,8 @@ end
         write_aggregation_manifest(manifest_path; manifest)
         before = read.([path, single_path, manifest_path])
 
-        table = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true)
-        @test names(table) == [names(manifest); ["status", "failed", "completed_blocks"]; ["ParticlesHistogram"]]
+        table = save_aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true)
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["ParticlesHistogram"]]
         @test isequal(table[:, names(manifest)], manifest)
         @test DataFrames.nrow(table) == 2  # Replicas remain separate rows.
         histogram = table.ParticlesHistogram[1]
@@ -358,7 +366,7 @@ end
         @test saved["error_method"] == "repeated blocking"
         @test saved["min_blocks"] == 10
         @test read.([path, single_path, manifest_path]) == before
-        more_levels = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2, output=nothing).ParticlesHistogram[1]
+        more_levels = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2).ParticlesHistogram[1]
         @test more_levels["particleNumberBySpeciesCounts"] == histogram["particleNumberBySpeciesCounts"]
         @test isequal(more_levels["particleNumberBySpeciesProbability"], histogram["particleNumberBySpeciesProbability"])
         @test more_levels["blocking_diagnostics"]["block_widths"] == [1, 2]
@@ -374,16 +382,16 @@ end
         @test flattened.meanSquaredTotalParticleNumber[1] === histogram["meanSquaredTotalParticleNumber"]
 
         write_combined_fixture(path; histogram_blocks=2)
-        partial = @test_logs (:warn, r"SingleParticleGreenFunction was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root; output=nothing)
+        partial = @test_logs (:warn, r"SingleParticleGreenFunction was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root)
         @test partial.ParticlesHistogram[1]["nblocks"] == 2
         @test partial.ParticlesHistogram[1]["nsamples"] == 3
         @test !ismissing(partial.Density[1]) && !ismissing(partial.Energy[1]) && !ismissing(partial.Windings[1])
         @test !ismissing(partial.ParticlesHistogram[2])
         manifest[!, "run.blocks"] = [1, 4]
         write_aggregation_manifest(manifest_path; manifest)
-        @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, output=nothing)
+        @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true)
         write_combined_fixture(path; histogram_blocks=1)
-        single_block = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, output=nothing).ParticlesHistogram[1]
+        single_block = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true).ParticlesHistogram[1]
         @test single_block["nblocks"] == 1
         @test single_block["nsamples"] == 2
         @test single_block["totalParticleNumberCounts"] == [1, 0, 1, 0, 0, 0, 0]
@@ -442,7 +450,7 @@ end
         occupations = permutedims(hcat(first_species, 1 .- first_species))
         write_histogram_trajectory_fixture(path, fill(1000, 64), occupations; capacities=[1, 2])
         before = read(path)
-        histogram = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=4).ParticlesHistogram[1]
+        histogram = save_aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=4).ParticlesHistogram[1]
         diagnostics = histogram["blocking_diagnostics"]
         @test diagnostics["block_widths"] == [1, 2, 4, 8, 16]
         @test diagnostics["block_counts"] == [64, 32, 16, 8, 4]
@@ -502,7 +510,7 @@ end
         write_histogram_trajectory_fixture(path, counts, reshape([zeros(Int, 10); 1], 1, 11); capacities=[1])
         manifest[!, "run.blocks"] = [11]
         write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
-        odd = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2, output=nothing).ParticlesHistogram[1]
+        odd = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2).ParticlesHistogram[1]
         @test odd["totalParticleNumberCounts"] == [55, 11]
         @test Measurements.value.(odd["totalParticleNumberProbability"]) ≈ [5/6, 1/6]
         @test odd["blocking_diagnostics"]["block_widths"] == [1, 2, 4]
@@ -528,7 +536,7 @@ end
         write_histogram_trajectory_fixture(path, counts, zeros(Int, 1, 5); capacities=[1])
         manifest[!, "run.blocks"] = [5]
         write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
-        large = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2, output=nothing).ParticlesHistogram[1]
+        large = aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true, min_blocks=2).ParticlesHistogram[1]
         @test large["nsamples"] === Int64(2)^53 + 5
         @test large["blocking_diagnostics"]["sample_counts"] == [Int64(2)^53 + 5, Int64(2)^53 + 4]
         @test large["totalParticleNumberCounts"] == [Int64(2)^53 + 5, 0]
@@ -577,7 +585,7 @@ end
                 file["observables/ParticlesHistogram/$dataset"] = value
                 dataset != "sampleCount" && (HDF5.attributes(file["observables/ParticlesHistogram/$dataset"])["reduction"] = "sum")
             end
-            @test_throws expected_error aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+            @test_throws expected_error aggregate(root; observables=["ParticlesHistogram"])
         end
         for field in ("particleNumberBySpeciesCounts", "totalParticleNumberCounts", "zSectorSampleCount",
                       "sampleCount")
@@ -585,7 +593,7 @@ end
             HDF5.h5open(path, "r+") do file
                 HDF5.delete_object(file, "observables/ParticlesHistogram/$field")
             end
-            @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+            @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"])
         end
         for field in ("species", "species_particle_number_bins", "total_particle_number_bins",
                       "max_particle_number_by_species")
@@ -593,7 +601,7 @@ end
             HDF5.h5open(path, "r+") do file
                 HDF5.delete_object(file, "observables/METADATA/ParticlesHistogram/$field")
             end
-            @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+            @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"])
         end
         for (field, value, expected_error) in (
             ("species", [1], DimensionMismatch),
@@ -612,7 +620,7 @@ end
                 HDF5.delete_object(file, "observables/METADATA/ParticlesHistogram/$field")
                 file["observables/METADATA/ParticlesHistogram/$field"] = value
             end
-            @test_throws expected_error aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+            @test_throws expected_error aggregate(root; observables=["ParticlesHistogram"])
         end
         for location in (:attribute, :metadata, :missing, :attribute_only, :metadata_only)
             write_combined_fixture(path)
@@ -629,9 +637,9 @@ end
                 end
             end
             if location in (:attribute_only, :metadata_only)
-                @test aggregate(root; observables=["ParticlesHistogram"], output=nothing).ParticlesHistogram[1]["nsamples"] == 6
+                @test aggregate(root; observables=["ParticlesHistogram"]).ParticlesHistogram[1]["nsamples"] == 6
             else
-                @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+                @test_throws ArgumentError aggregate(root; observables=["ParticlesHistogram"])
             end
         end
 
@@ -649,7 +657,7 @@ end
         end
         manifest[!, "run.blocks"] = [2]
         write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
-        @test_throws OverflowError aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+        @test_throws OverflowError aggregate(root; observables=["ParticlesHistogram"])
         # Individual bins fit, but summing bins inside a block also must be checked.
         HDF5.h5open(path, "r+") do file
             HDF5.delete_object(file, "observables/ParticlesHistogram/totalParticleNumberCounts")
@@ -658,7 +666,7 @@ end
             HDF5.delete_object(file, "observables/METADATA/ParticlesHistogram/total_particle_number_bins")
             file["observables/METADATA/ParticlesHistogram/total_particle_number_bins"] = [0, 1]
         end
-        @test_throws OverflowError aggregate(root; observables=["ParticlesHistogram"], output=nothing)
+        @test_throws OverflowError aggregate(root; observables=["ParticlesHistogram"])
     end
 end
 
@@ -735,14 +743,14 @@ end
                 HDF5.delete_object(file, "observables/Energy/$dataset")
                 file["observables/Energy/$dataset"] = value
             end
-            @test_throws expected_error aggregate(root; output=nothing)
+            @test_throws expected_error aggregate(root)
         end
         for field in ("sampleCount", "diagonalEnergy")
             write_combined_fixture(path)
             HDF5.h5open(path, "r+") do file
                 HDF5.delete_object(file, "observables/Energy/$field")
             end
-            @test_throws ArgumentError aggregate(root; output=nothing)
+            @test_throws ArgumentError aggregate(root)
         end
         for location in (:attribute, :metadata)
             write_combined_fixture(path)
@@ -755,28 +763,28 @@ end
                     file["observables/METADATA/Energy/reduction_totalEnergy"] = "sum"
                 end
             end
-            @test_throws ArgumentError aggregate(root; output=nothing)
+            @test_throws ArgumentError aggregate(root)
         end
         write_combined_fixture(path)
         HDF5.h5open(path, "r+") do file
             HDF5.delete_object(file, "observables/Windings/windingCorrelationBySpecies")
             file["observables/Windings/windingCorrelationBySpecies"] = zeros(1, 2, 3)
         end
-        @test_throws DimensionMismatch aggregate(root; output=nothing)
+        @test_throws DimensionMismatch aggregate(root)
         write_combined_fixture(path; density_blocks=2)
         HDF5.h5open(path, "r+") do file
             HDF5.delete_object(file, "observables/Density/sampleCount")
             file["observables/Density/sampleCount"] = [0, 1]
         end
-        @test_throws ArgumentError aggregate(root; output=nothing)
+        @test_throws ArgumentError aggregate(root)
         write_combined_fixture(path)
         manifest[!, "run.blocks"] = [3]
         write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
-        @test_throws ArgumentError aggregate(root; output=nothing)
+        @test_throws ArgumentError aggregate(root)
         for expected_blocks in (0, true, 4.0, missing)
             manifest[!, "run.blocks"] = [expected_blocks]
             write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
-            @test_throws ArgumentError aggregate(root; output=nothing)
+            @test_throws ArgumentError aggregate(root)
         end
     end
 end
@@ -818,7 +826,7 @@ end
         manifest[!, "model.hopping.J"] = [[0.62, 0.62] for _ in 1:4]
         write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
         source_bytes = read(path)
-        aggregate = @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"])
+        aggregate = @test_logs (:warn, r"missing") WormWeaver.save_aggregate(root; observables=["Density"])
         @test DataFrames.nrow(aggregate) == 4
         @test isequal(aggregate[:, names(manifest)], manifest)
         @test aggregate.Density[2]["nblocks"] == 2
@@ -841,17 +849,16 @@ end
         @test Measurements.value.(saved.Density[1]["densityBySpecies"]) == [1.0, 1.0]
         @test Measurements.uncertainty.(saved.Density[1]["densityBySpecies"]) ≈ [1.0, 0.0]
         @test read(path) == source_bytes
-        @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"])
-        @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"], overwrite=true)
-        @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"], output=nothing)
-        @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"], output="manifest.jld2", overwrite=true)
-        @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"], output="sim1/results.h5", overwrite=true)
+        @test_throws ArgumentError WormWeaver.save_aggregate(root; observables=["Density"])
+        @test_logs (:warn, r"missing") WormWeaver.save_aggregate(root; observables=["Density"], overwrite=true)
+        @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"])
+        @test_throws ArgumentError WormWeaver.save_aggregate(root; observables=["Density"], output="sim1/results.h5", overwrite=true)
 
         # Fail on malformed histories instead of silently deleting measurements.
         write_density_fixture(path, history, [1000, 1000, 1000])
-        @test_throws DimensionMismatch WormWeaver.aggregate(root; observables=["Density"], output=nothing)
+        @test_throws DimensionMismatch WormWeaver.aggregate(root; observables=["Density"])
         write_density_fixture(path, history, fill(1000, 4); reduction="sum")
-        @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"], output=nothing)
+        @test_throws ArgumentError WormWeaver.aggregate(root; observables=["Density"])
     end
 end
 
@@ -864,10 +871,10 @@ end
         manifest_path = joinpath(root, "manifest.jld2")
         write_aggregation_manifest(manifest_path; manifest)
         before = read.([path, manifest_path])
-        plain = aggregate(root; min_blocks=2, output=nothing)
-        disabled = aggregate(root; min_blocks=2, blocking_diagnostics=false, output=nothing)
+        plain = aggregate(root; min_blocks=2)
+        disabled = aggregate(root; min_blocks=2, blocking_diagnostics=false)
         @test isequal(plain, disabled)
-        enabled = aggregate(root; min_blocks=2, blocking_diagnostics=true)
+        enabled = save_aggregate(root; min_blocks=2, blocking_diagnostics=true)
         for observable in ("Density", "Energy", "Windings", "ParticlesHistogram")
             without_diagnostics = plain[1, observable]
             with_diagnostics = enabled[1, observable]
@@ -915,7 +922,7 @@ end
         @test read.([path, manifest_path]) == before
 
         write_combined_fixture(path; nspecies=1)
-        single_species = aggregate(root; observables=["Windings"], blocking_diagnostics=true, output=nothing).Windings[1]
+        single_species = aggregate(root; observables=["Windings"], blocking_diagnostics=true).Windings[1]
         @test !haskey(single_species["blocking_diagnostics"], "windingCorrelationBySpeciesStandardError")
 
         # Every observable supports a single saved block, including scalar
@@ -937,7 +944,7 @@ end
         end
         manifest[!, "run.blocks"] = [1]
         write_aggregation_manifest(manifest_path; manifest)
-        single_block = aggregate(root; blocking_diagnostics=true, output=nothing)
+        single_block = aggregate(root; blocking_diagnostics=true)
         for observable in ("Density", "Energy", "Windings", "ParticlesHistogram")
             diagnostics = single_block[1, observable]["blocking_diagnostics"]
             @test diagnostics["block_widths"] == [1]
@@ -955,7 +962,7 @@ end
         write_density_fixture(path, reshape([zeros(10); 4.0], 1, 11), counts)
         manifest[!, "run.blocks"] = [11]
         write_aggregation_manifest(manifest_path; manifest)
-        odd = aggregate(root; observables=["Density"], min_blocks=2, blocking_diagnostics=true, output=nothing).Density[1]
+        odd = aggregate(root; observables=["Density"], min_blocks=2, blocking_diagnostics=true).Density[1]
         @test Measurements.value(odd["densityBySpecies"][1]) ≈ 2/3
         @test odd["blocking_diagnostics"]["block_widths"] == [1, 2, 4]
         @test odd["blocking_diagnostics"]["block_counts"] == [11, 5, 2]
@@ -1036,7 +1043,7 @@ end
             manifest_path = joinpath(root, "manifest.jld2")
             write_aggregation_manifest(manifest_path; manifest)
             before_bytes = read.([path, manifest_path])
-            table = aggregate(root; observables=["Windings"], min_blocks=2,
+            table = save_aggregate(root; observables=["Windings"], min_blocks=2,
                               blocking_diagnostics=true)
             @test isequal(table.Windings[1], enabled)
             @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)

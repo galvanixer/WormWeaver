@@ -3,6 +3,7 @@
         labels = ["waiting", "tuning_failed", "one", "partial", "finished",
                   "production_failed", "lagging_log", "empty", "missing_log"]
         manifest = DataFrames.DataFrame(
+            study_id=fill("partial-aggregation-fixture", length(labels)),
             simulation=labels,
             config=["job$i/config.yaml" for i in eachindex(labels)],
             output_file=["job$i/results.h5" for i in eachindex(labels)])
@@ -46,7 +47,7 @@
             push!(sources, path)
         end
         original = read.(sources)
-        table = @test_logs (:warn, r"Density has no saved blocks") (:warn, r"Energy has no saved blocks") (:warn, r"Windings has no saved blocks") (:warn, r"ParticlesHistogram has no saved blocks") (:warn, r"SingleParticleGreenFunction has no saved blocks") aggregate(root; blocking_diagnostics=true)
+        table = @test_logs (:warn, r"Density has no saved blocks") (:warn, r"Energy has no saved blocks") (:warn, r"Windings has no saved blocks") (:warn, r"ParticlesHistogram has no saved blocks") (:warn, r"SingleParticleGreenFunction has no saved blocks") save_aggregate(root; blocking_diagnostics=true)
         @test table.simulation == labels
         @test isequal(table[:, names(manifest)], manifest)
         @test table.status == ["Pre Tuning", "Tuning", "Production Started", "Checkpoint 2",
@@ -54,6 +55,10 @@
                                "Production Started", "No Log File"]
         @test table.failed == [false, true, false, false, false, true, false, false, false]
         @test table.completed_blocks == [0, 0, 1, 2, 4, 1, 1, 1, 0]
+        @test table.log_source == [fill("local", 8); "none"]
+        snapshot = status_manifest(root)
+        @test isequal(table[:, names(snapshot)], snapshot)
+        @test !any(startswith("manifest_status_"), readdir(root))
         for name in ("Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction")
             @test all(ismissing, table[[1, 2, 8, 9], name])
             @test [table[i, name]["nblocks"] for i in 3:7] == saved_blocks[3:7]
@@ -70,7 +75,7 @@
         @test Measurements.value(table.Energy[7]["totalEnergy"]) ≈ 1.5
         @test table.ParticlesHistogram[4]["zSectorSampleCount"] == 3
         saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
-        metadata_columns = [names(manifest); ["status", "failed", "completed_blocks"]]
+        metadata_columns = names(snapshot)
         @test isequal(saved[:, metadata_columns], table[:, metadata_columns])
         # Measurements with NaN uncertainties compare unequal, so check the
         # stored values and uncertainties separately for the one-block run.
@@ -84,11 +89,20 @@
                           Measurements.uncertainty.(table[3, name][field]))
         end
         @test read.(sources) == original
-        @test_throws ArgumentError aggregate(root; output="job3/simulation.log", overwrite=true)
+        @test_throws ArgumentError save_aggregate(root; output="job3/simulation.log", overwrite=true)
 
-        # Status columns in the manifest must not be silently replaced.
-        manifest.failed = falses(length(labels))
+        # Refresh stale monitoring columns before deciding which runs to read.
+        manifest.status = fill("Finished", length(labels))
+        manifest.completed_blocks = zeros(Int, length(labels))
+        manifest.failed = trues(length(labels))
+        manifest.log_source = fill("scratch", length(labels))
         JLD2.jldsave(manifest_path; manifest)
-        @test_throws ArgumentError aggregate(root; output=nothing)
+        stale_bytes = read(manifest_path)
+        refreshed = @test_logs (:warn, r"Density has no saved blocks") aggregate(
+            root; observables=["Density"])
+        @test isequal(refreshed[:, names(snapshot)], snapshot)
+        @test all(ismissing, refreshed.Density[[1, 2, 8, 9]])
+        @test refreshed.Density[7]["nblocks"] == 3
+        @test read(manifest_path) == stale_bytes
     end
 end

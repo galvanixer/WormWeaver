@@ -88,13 +88,14 @@ end
 
 """
     aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
-        min_blocks=10, blocking_diagnostics=false,
-        output="aggregated.jld2", overwrite=false) -> DataFrame
+        min_blocks=10, blocking_diagnostics=false) -> DataFrame
 
-Read `manifest.jld2` and each simulation's HDF5 block histories. Preserve manifest
-rows, add `status`, `failed`, and `completed_blocks` from `study_status`, and add a
-dictionary column for each selected observable. The manifest must include
-`simulation`, `config`, `output_file`, and `run.blocks`. Simulations with zero
+Obtain the manifest with refreshed local-log progress from `status_manifest`,
+then read each simulation's HDF5 block histories. Preserve its rows and all columns,
+including `status`, `completed_blocks`, `failed`, and `log_source`, and add a
+dictionary column for each selected observable. The source manifest must include
+`study_id`, `simulation`, `config`, `output_file`, and `run.blocks`, with nonblank
+study IDs and unique `(study_id, simulation)` keys. Simulations with zero
 logged completed blocks are skipped, retaining rows with missing observable
 summaries. Missing logs count as zero completed blocks.
 Failed runs with saved production blocks remain eligible.
@@ -168,15 +169,12 @@ Component uncertainties do not reconstruct covariance; aggregate saved totals an
 squares directly. Keep original block histograms for joint variance or
 compressibility uncertainties.
 
-Save the table under the `aggregate` key in `output`, relative to the study folder
-unless absolute. Set `output=nothing` to only return the table. Existing outputs
-require `overwrite=true`; source manifests, configs, logs, and results are never overwritten.
+Return the DataFrame without writing files. Use `save_aggregate` to aggregate and
+save the table as JLD2.
 """
 function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
                    min_blocks::Integer=10,
-                   blocking_diagnostics::Bool=false,
-                   output::Union{Nothing,AbstractString}="aggregated.jld2",
-                   overwrite::Bool=false)
+                   blocking_diagnostics::Bool=false)
     min_blocks >= 2 || throw(ArgumentError("min_blocks must be at least two"))
     observables isa Union{AbstractVector,Tuple,AbstractSet} ||
         throw(ArgumentError("observables must be a collection of names"))
@@ -186,39 +184,13 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
         throw(ArgumentError("supported observables are Density, Energy, Windings, ParticlesHistogram, and SingleParticleGreenFunction"))
     allunique(selected) || throw(ArgumentError("observables must not contain duplicates"))
     root = abspath(study_dir)
-    manifest_path = joinpath(root, "manifest.jld2")
-    manifest = JLD2.load(manifest_path, "manifest")
-    manifest isa DataFrames.AbstractDataFrame || throw(ArgumentError("manifest must be a DataFrame"))
+    manifest = status_manifest(root)
     all(name -> name in names(manifest), ("output_file", "run.blocks")) ||
         throw(ArgumentError("manifest must contain output_file and run.blocks"))
-    status_columns = ["status", "failed", "completed_blocks"]
-    any(name -> name in names(manifest), [selected; status_columns]) &&
-        throw(ArgumentError("manifest already contains a selected observable or status column"))
-    statuses = study_status(root; manifest)
-    destination = output === nothing ? nothing : normpath(joinpath(root, output))
-    if destination !== nothing
-        isempty(strip(output)) && throw(ArgumentError("output must be a nonempty path"))
-        protected = [manifest_path, joinpath(root, "manifest.csv")]
-        append!(protected, [normpath(joinpath(root, file)) for file in manifest.output_file
-                            if file isa AbstractString])
-        for row in eachrow(manifest)
-            config_path = normpath(joinpath(root, row.config))
-            push!(protected, config_path, joinpath(dirname(config_path), "simulation.log"))
-        end
-        real_destination = ispath(destination) ? realpath(destination) : destination
-        any(path -> real_destination == (ispath(path) ? realpath(path) : path), protected) &&
-            throw(ArgumentError("output cannot replace a source manifest, config, log, or results file"))
-        islink(destination) && throw(ArgumentError("output must not be a symlink"))
-        if ispath(destination)
-            isfile(destination) || throw(ArgumentError("output must be a regular file"))
-            overwrite || throw(ArgumentError("Output already exists: $destination; use overwrite=true"))
-        end
-    end
+    any(name -> name in names(manifest), selected) &&
+        throw(ArgumentError("manifest already contains a selected observable column"))
 
     table = DataFrames.DataFrame(manifest; copycols=true)
-    for column in status_columns
-        table[!, column] = statuses[!, column]
-    end
     for observable in selected
         table[!, observable] = Union{Missing,Dict{String,Any}}[missing for _ in 1:DataFrames.nrow(table)]
     end
@@ -226,7 +198,7 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
         expected_blocks = row["run.blocks"]
         expected_blocks isa Integer && !(expected_blocks isa Bool) && expected_blocks > 0 ||
             throw(ArgumentError("run.blocks must be a positive integer in manifest row $i"))
-        statuses.completed_blocks[i] >= 1 || continue
+        row.completed_blocks >= 1 || continue
         if !(row.output_file isa AbstractString) || isempty(strip(row.output_file))
             @warn "No results path; leaving selected observable cells missing" manifest_row=i
             continue
@@ -242,13 +214,54 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
             end
         end
     end
-    if destination !== nothing
-        mkpath(dirname(destination))
-        if all(==("SingleParticleGreenFunction"), selected)
-            JLD2.jldsave(destination; aggregate=table)
-        else
-            JLD2.jldsave(destination; aggregate=table, error_method="repeated blocking", min_blocks)
-        end
+    return table
+end
+
+"""
+    save_aggregate(study_dir; output="aggregated.jld2", overwrite=false,
+        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
+        min_blocks=10, blocking_diagnostics=false) -> DataFrame
+
+Call `aggregate` with the selected observables and calculation options, save its
+DataFrame under the `aggregate` key in a JLD2 file, and return that DataFrame.
+The output path is relative to the study directory unless absolute. Create parent
+directories as needed. Existing outputs require `overwrite=true`; source configs,
+logs, and results are protected from replacement, and symlink outputs are rejected.
+
+For selections other than only `SingleParticleGreenFunction`, also save
+`error_method="repeated blocking"` and `min_blocks` as top-level metadata.
+"""
+function save_aggregate(study_dir::AbstractString;
+                        output::AbstractString="aggregated.jld2",
+                        overwrite::Bool=false,
+                        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
+                        min_blocks::Integer=10,
+                        blocking_diagnostics::Bool=false)
+    root = abspath(study_dir)
+    isempty(strip(output)) && throw(ArgumentError("output must be a nonempty path"))
+    destination = normpath(joinpath(root, output))
+    islink(destination) && throw(ArgumentError("output must not be a symlink"))
+    if ispath(destination)
+        isfile(destination) || throw(ArgumentError("output must be a regular file"))
+        overwrite || throw(ArgumentError("Output already exists: $destination; use overwrite=true"))
+    end
+
+    table = aggregate(root; observables, min_blocks, blocking_diagnostics)
+    protected = [normpath(joinpath(root, file)) for file in table.output_file
+                 if file isa AbstractString]
+    for row in eachrow(table)
+        config_path = normpath(joinpath(root, row.config))
+        push!(protected, config_path, joinpath(dirname(config_path), "simulation.log"))
+    end
+    real_destination = ispath(destination) ? realpath(destination) : destination
+    any(path -> real_destination == (ispath(path) ? realpath(path) : path), protected) &&
+        throw(ArgumentError("output cannot replace a source config, log, or results file"))
+
+    mkpath(dirname(destination))
+    if all(==("SingleParticleGreenFunction"), observables)
+        JLD2.jldsave(destination; aggregate=table)
+    else
+        JLD2.jldsave(destination; aggregate=table, error_method="repeated blocking", min_blocks)
     end
     return table
 end
