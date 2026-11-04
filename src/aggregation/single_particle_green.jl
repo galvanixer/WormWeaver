@@ -1,11 +1,12 @@
-# Equal-time normalization is an adapter over the shared paired-ratio engine.
+# Raw momentum/time means and equal-time normalization use shared statistics.
 const SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA = (
     "species", "displacements", "displacement_vectors", "displacement_counts",
     "beta", "equal_time_window", "equal_time_convention", "production_log_eta",
 )
 const SINGLE_PARTICLE_GREEN_DEFINITION = (
-    fields=("zSectorVisitCount",), optional_fields=("gREqualTimeHits",),
+    fields=("zSectorVisitCount",), optional_fields=("gREqualTimeHits", "gKTau"),
     reduction="sum", integer_sums=false,
+    field_reductions=(gKTau="mean",), complex_fields=("gKTau",),
     metadata=(SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA...,
               "momentum_indices", "momenta", "tau_edges", "frequency_indices", "frequencies",
               "endpoint_convention", "normalization", "equal_time_normalization"),
@@ -14,13 +15,35 @@ const SINGLE_PARTICLE_GREEN_DEFINITION = (
 """
     validate_single_particle_green(histories, counts, metadata)
 
-Check Z block counts and, when equal-time hits exist, their species/displacement
-axes and normalization metadata. Return `nothing`; throw on invalid data.
+Check Z block counts, raw momentum/time axes, and equal-time axes and normalization
+metadata when those measurements exist. Return `nothing`; throw on invalid data.
 """
 function validate_single_particle_green(histories, counts, metadata)
     zcounts = histories["zSectorVisitCount"]
     size(zcounts) == (length(counts),) || throw(DimensionMismatch(
         "SingleParticleGreenFunction Z counts must have one entry per block"))
+    if haskey(histories, "gKTau") || haskey(histories, "gREqualTimeHits")
+        species = metadata["species"]
+        species isa AbstractVector{<:Integer} && !(eltype(species) <: Bool) &&
+            all(>(0), species) && allunique(species) || throw(ArgumentError(
+            "SingleParticleGreenFunction/species must contain positive unique integer IDs"))
+    end
+    if haskey(histories, "gKTau")
+        history = histories["gKTau"]
+        ndims(history) == 4 && all(>(0), size(history)[1:3]) || throw(DimensionMismatch(
+            "SingleParticleGreenFunction/gKTau must have species × momentum × time-bin × block dimensions"))
+        momenta, edges = metadata["momenta"], metadata["tau_edges"]
+        momenta isa AbstractMatrix{<:Real} && size(momenta, 2) > 0 && all(isfinite, momenta) ||
+            throw(ArgumentError("SingleParticleGreenFunction/momenta must be a finite numeric matrix"))
+        edges isa AbstractVector{<:Real} && all(isfinite, edges) && all(>(0), diff(edges)) ||
+            throw(ArgumentError("SingleParticleGreenFunction/tau_edges must be finite and strictly increasing"))
+        size(history)[1:3] == (length(species), size(momenta, 1), length(edges) - 1) ||
+            throw(DimensionMismatch("SingleParticleGreenFunction/gKTau axes do not match metadata"))
+        if haskey(metadata, "momentum_indices")
+            size(metadata["momentum_indices"]) == size(momenta) || throw(DimensionMismatch(
+                "SingleParticleGreenFunction/momentum_indices and momenta must have matching shapes"))
+        end
+    end
     haskey(histories, "gREqualTimeHits") || return nothing
     hits = histories["gREqualTimeHits"]
     validate_equal_time_axes(hits, counts, metadata)
@@ -29,7 +52,7 @@ function validate_single_particle_green(histories, counts, metadata)
     return nothing
 end
 
-"""Check equal-time histogram dimensions and selected-species labels."""
+"""Check equal-time axes against validated species IDs and sector-weight metadata."""
 function validate_equal_time_axes(hits, counts, metadata)
     ndims(hits) == 3 || throw(DimensionMismatch(
         "SingleParticleGreenFunction/gREqualTimeHits must have species × displacement × block dimensions"))
@@ -40,12 +63,8 @@ function validate_equal_time_axes(hits, counts, metadata)
         "SingleParticleGreenFunction counts must have one entry per block"))
 
     species = metadata["species"]
-    species isa AbstractVector{<:Integer} && !(eltype(species) <: Bool) ||
-        throw(ArgumentError("SingleParticleGreenFunction/species must be an integer vector"))
     length(species) == nspecies || throw(DimensionMismatch(
         "SingleParticleGreenFunction/species must match the hits species axis"))
-    all(>(0), species) && allunique(species) || throw(ArgumentError(
-        "SingleParticleGreenFunction/species must contain positive unique IDs"))
     weights = metadata["production_log_eta"]
     weights isa AbstractVector{<:Real} && all(isfinite, weights) || throw(ArgumentError(
         "SingleParticleGreenFunction/production_log_eta must be a finite numeric vector"))
@@ -113,12 +132,28 @@ end
         min_blocks=10, blocking_diagnostics=false)
 
 Summarize validated histories as a dictionary retaining raw sums and metadata.
+When gKTau exists, sample-count-weight its block means and attach separate real
+and imaginary blocking errors, without Z division or physical normalization.
 When equal-time hits exist, add normalized `grEqualTime` Measurements with paired
 jackknife errors across blocking levels, plus optional diagnostic curves.
 """
 function single_particle_green_summary(histories, counts, metadata;
                                        min_blocks=10, blocking_diagnostics::Bool=false)
     summary = summarize_raw_green_counts(histories, counts, metadata)
+    if haskey(histories, "gKTau")
+        # Analyze components independently with the existing block-mean estimator.
+        history = histories["gKTau"]
+        components = mean_observable_summary(
+            Dict("gKTauReal" => real.(history), "gKTauImaginary" => imag.(history)),
+            counts, Dict(); min_blocks, blocking_diagnostics)
+        summary["gKTau"] = complex.(components["gKTauReal"], components["gKTauImaginary"])
+        summary["gKTauAggregationMethod"] = "sample-count-weighted mean"
+        summary["gKTauErrorMethod"] = components["error_method"]
+        summary["min_blocks"] = min_blocks
+        if blocking_diagnostics
+            summary["blocking_diagnostics"] = components["blocking_diagnostics"]
+        end
+    end
     haskey(histories, "gREqualTimeHits") || return summary
 
     normalization = equal_time_normalization(metadata)
@@ -134,7 +169,7 @@ function single_particle_green_summary(histories, counts, metadata;
     if blocking_diagnostics
         diagnostics = statistics.blocking_diagnostics
         diagnostics["grEqualTimeStandardError"] = pop!(diagnostics, "real_standard_errors")
-        summary["blocking_diagnostics"] = diagnostics
+        merge!(get!(summary, "blocking_diagnostics", Dict{String,Any}()), diagnostics)
     end
     return summary
 end

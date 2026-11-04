@@ -465,6 +465,13 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
 
 - `Density` contains `densityBySpecies`, `particleNumberBySpecies`, and
   `totalParticleNumber`, plus `species` labels when present.
+  Use `describe_density(table.Density[1])` to print one simulation's values with
+  units, uncertainties, saved block/sample counts, and the uncertainty method.
+  Species IDs label the rows when available; otherwise rows use component numbers
+  and the report states that species IDs are unavailable. A missing summary prints
+  "No Density measurements available." Undefined uncertainties are shown as
+  "uncertainty unavailable" alongside the mean. The helper returns `nothing`,
+  leaves the summary unchanged, and accepts `io` to capture or redirect its output.
 - `Energy` contains `diagonalEnergy`, `kineticEnergy`, and `totalEnergy`, and
   their `PerSite` counterparts.
 - `Windings` contains `windingBySpecies`, `squaredWindingBySpecies`,
@@ -485,8 +492,13 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
   hits exist, `grEqualTime` contains normalized species × displacement `Measurement`
   values with repeated-blocking paired jackknife errors. Analysis is computed
   from original histories, without reading `/derived/SingleParticleGreenFunction`.
-  Time/frequency-only groups return Z/sample summaries and available metadata;
-  equal-time results are omitted when that histogram was not measured.
+  When `gKTau` is saved, its block means are combined with `sampleCount` weights
+  into a species × momentum × τ-bin array of complex Measurements, with separate
+  real and imaginary repeated-blocking errors. These are raw sector-reweighted
+  estimates: no Z-visit division or physical normalization is applied. Sample/Z
+  totals and available grid metadata are retained; other time/frequency
+  measurements are not summarized. Equal-time results are omitted when that
+  histogram was not measured.
 
 Select only Green-function aggregation:
 
@@ -499,7 +511,23 @@ green.sampleCount[1]         # Total measurement attempts; no extra weighting.
 green.grEqualTime[1]         # Normalized finite-window correlation ± error, if measured.
 Measurements.value.(green.grEqualTime[1])
 Measurements.uncertainty.(green.grEqualTime[1])
+
+# When momentum/time measurements are present:
+gktau = green.gKTau[1]  # Raw weighted mean; species × momentum × τ bin.
+Measurements.value.(real.(gktau))
+Measurements.uncertainty.(imag.(gktau))
 ```
+
+For raw `gKTau`, the estimate is `sum(sampleCount_b * gKTau_b) / sum(sampleCount_b)`.
+All saved blocks contribute to its mean. Each component's error uses the existing
+block-mean repeated-blocking estimator. `gKTauAggregationMethod` and
+`gKTauErrorMethod` describe this calculation separately from equal-time analysis.
+With `blocking_diagnostics=true`, `gKTauRealStandardError` and
+`gKTauImaginaryStandardError` retain species × momentum × τ-bin × blocking-level
+curves alongside the equal-time diagnostics, when present. Component errors do
+not retain covariance; original HDF5 block histories remain available for future
+physical ratio estimates and paired uncertainties. A `gKTau`-only history can be
+aggregated with zero total Z visits.
 
 For equal-time sampling, normalization is
 `nsites*beta/(displacement_counts[r]*equal_time_window*exp(production_log_eta[s]))`
@@ -536,11 +564,10 @@ Complex outputs are combined `Complex{Measurement{Float64}}` values with separat
 real and imaginary uncertainties. Joint derived quantities should be computed
 inside `transform`; individual output errors do not retain covariance.
 
-The helper accepts the existing SPGF numerator representations `gRTauNumerator`,
-the real/imaginary `gKTau`, `gROmega`, and `gKOmega` numerator pairs after joining
-complex components. These are sector-reweighted block means, unlike equal-time
-raw sums. Their physical normalization adapters are not implemented by `aggregate`
-yet; the helper's default `identity` produces the numerator/Z ratio alone.
+The helper accepts sector-reweighted block means such as native complex `gKTau`,
+using `reduction=:mean` and sample counts. Its default `identity` produces the
+numerator/Z ratio alone. `aggregate` stores the raw weighted `gKTau` mean described
+above instead; physical time/frequency normalization is not implemented.
 
 The aggregation code follows three steps: `aggregate.jl` coordinates runs and
 selects summaries; `observable_io.jl` reads saved histories and metadata; each

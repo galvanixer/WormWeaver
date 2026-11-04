@@ -126,9 +126,14 @@ normalized Measurements with repeated-blocking paired jackknife errors; nsites,
 normalization, error_method, error_status, and min_blocks describe the analysis.
 Optional diagnostics include grEqualTimeStandardError, retained Z/sample totals,
 and level statuses. The central value uses all raw counts, without bias correction.
-Time/frequency-only groups retain raw Z/sample summaries and available metadata.
+When gKTau exists, its sample-count-weighted mean is retained as a species ×
+momentum × time-bin array of Complex{Measurement{Float64}}, with independent
+real/imaginary repeated-blocking errors. gKTauAggregationMethod and gKTauErrorMethod
+describe this raw estimate. Optional diagnostics include gKTauRealStandardError
+and gKTauImaginaryStandardError. No Z division or physical normalization is applied
+to gKTau. Other time/frequency measurements are not summarized.
 Equal-time analysis requires one-sided sums and normalization metadata; zero total
-Z visits throw. No derived HDF5 datasets are read and no time/frequency physical
+Z visits throw for equal-time analysis. No derived HDF5 datasets are read and no time/frequency physical
 normalization is performed.
 
 Winding summaries add squaredCoflowBySpeciesPair and squaredCounterflowBySpeciesPair

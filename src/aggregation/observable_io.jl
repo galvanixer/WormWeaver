@@ -39,7 +39,7 @@ function read_observable_history(file, group, observable, field, definition, blo
         throw(DimensionMismatch("$observable/$field and sampleCount have different block counts"))
     attributes = HDF5.attributes(dataset)
     reduction_path = "observables/METADATA/$observable/reduction_$field"
-    expected_reduction = definition.reduction
+    expected_reduction = get(get(definition, :field_reductions, (;)), Symbol(field), definition.reduction)
     if expected_reduction == "sum" && !haskey(attributes, "reduction") && !haskey(file, reduction_path)
         throw(ArgumentError("$observable/$field requires explicit sum reduction metadata"))
     end
@@ -53,7 +53,8 @@ function read_observable_history(file, group, observable, field, definition, blo
     end
 
     history = read(dataset)
-    history isa AbstractArray{<:Real} || throw(ArgumentError("$observable/$field must be a numeric history"))
+    numeric_type = field in get(definition, :complex_fields, ()) ? Number : Real
+    history isa AbstractArray{<:numeric_type} || throw(ArgumentError("$observable/$field must be a numeric history"))
     all(isfinite, history) || throw(ArgumentError("$observable/$field contains nonfinite values"))
     if expected_reduction == "sum"
         if get(definition, :integer_sums, true)
@@ -70,10 +71,14 @@ end
 """Select required metadata explicitly for the observable and available histories."""
 function required_observable_metadata(observable, definition, histories)
     if observable == "SingleParticleGreenFunction"
+        required = String[]
         if haskey(histories, "gREqualTimeHits")
-            return SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA
+            append!(required, SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA)
         end
-        return ()
+        if haskey(histories, "gKTau")
+            append!(required, ("species", "momenta", "tau_edges"))
+        end
+        return unique(required)
     elseif definition.reduction == "sum"
         return definition.metadata
     end
