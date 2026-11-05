@@ -105,9 +105,21 @@ function write_particle_histogram_fixture(file; nblocks=4, nspecies=2)
     ))
 end
 
+function write_density_correlation_fixture(file; nblocks=4, nspecies=2, reduction="mean")
+    full = zeros(nspecies, nspecies, 3, nblocks)
+    for b in 1:nblocks, r in 1:3, t in 1:nspecies, s in 1:nspecies
+        full[s, t, r, b] = s + 2t + 3r + b
+    end
+    total = dropdims(sum(full; dims=(1, 2)); dims=(1, 2))
+    write_observable_fixture(file, "DensityCorrelation", (; full, total),
+        [1, 3, 2, 4][1:nblocks]; reduction, metadata=(
+            displacements=reshape([0, 1, -1], 3, 1), displacement_counts=[4, 2, 2]))
+end
+
 function write_combined_fixture(path; density_blocks=4, nspecies=2,
-                                groups=("Density", "Energy", "Windings", "ParticlesHistogram"),
-                                legacy=false, histogram_blocks=4, energy_blocks=4, winding_blocks=4)
+                                groups=("Density", "Energy", "Windings", "ParticlesHistogram", "DensityCorrelation"),
+                                legacy=false, histogram_blocks=4, energy_blocks=4, winding_blocks=4,
+                                correlation_blocks=4)
     mkpath(dirname(path))
     HDF5.h5open(path, "w") do file
         HDF5.create_group(file, "observables")
@@ -150,6 +162,9 @@ function write_combined_fixture(path; density_blocks=4, nspecies=2,
         if "ParticlesHistogram" in groups
             write_particle_histogram_fixture(file; nblocks=histogram_blocks, nspecies)
         end
+        if "DensityCorrelation" in groups
+            write_density_correlation_fixture(file; nblocks=correlation_blocks, nspecies, reduction)
+        end
     end
 end
 
@@ -170,7 +185,7 @@ end
         table = aggregate(root; min_blocks=2)
         @test readdir(root) == before_files
         @test isequal(aggregate(root; min_blocks=2), table)
-        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"]]
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"]]
         @test ismissing(table.SingleParticleGreenFunction[1])
         @test isequal(table[:, names(manifest)], manifest)
         @test table.Density[1]["species"] == [1, 2]
@@ -252,7 +267,7 @@ end
         @test !ismissing(partial.Windings[1])
         @test !ismissing(partial.ParticlesHistogram[1])
         write_combined_fixture(path; groups=("Energy",))
-        absent = @test_logs (:warn, r"Density was not found") (:warn, r"Windings was not found") (:warn, r"ParticlesHistogram was not found") (:warn, r"SingleParticleGreenFunction was not found") aggregate(root)
+        absent = @test_logs (:warn, r"Density was not found") (:warn, r"Windings was not found") (:warn, r"ParticlesHistogram was not found") (:warn, r"SingleParticleGreenFunction was not found") (:warn, r"DensityCorrelation was not found") aggregate(root)
         @test ismissing(absent.Density[1]) && ismissing(absent.Windings[1])
         @test !ismissing(absent.Energy[1])
         @test ismissing(absent.ParticlesHistogram[1])
@@ -875,7 +890,7 @@ end
         disabled = aggregate(root; min_blocks=2, blocking_diagnostics=false)
         @test isequal(plain, disabled)
         enabled = save_aggregate(root; min_blocks=2, blocking_diagnostics=true)
-        for observable in ("Density", "Energy", "Windings", "ParticlesHistogram")
+        for observable in ("Density", "Energy", "Windings", "ParticlesHistogram", "DensityCorrelation")
             without_diagnostics = plain[1, observable]
             with_diagnostics = enabled[1, observable]
             @test !haskey(without_diagnostics, "blocking_diagnostics")
@@ -928,7 +943,7 @@ end
         # Every observable supports a single saved block, including scalar
         # energy fields and matrix-valued winding fields.
         HDF5.h5open(path, "r+") do file
-            for observable in ("Density", "Energy", "Windings", "ParticlesHistogram")
+            for observable in ("Density", "Energy", "Windings", "ParticlesHistogram", "DensityCorrelation")
                 group = file["observables/$observable"]
                 for field in keys(group)
                     dataset = group[field]
@@ -945,7 +960,7 @@ end
         manifest[!, "run.blocks"] = [1]
         write_aggregation_manifest(manifest_path; manifest)
         single_block = aggregate(root; blocking_diagnostics=true)
-        for observable in ("Density", "Energy", "Windings", "ParticlesHistogram")
+        for observable in ("Density", "Energy", "Windings", "ParticlesHistogram", "DensityCorrelation")
             diagnostics = single_block[1, observable]["blocking_diagnostics"]
             @test diagnostics["block_widths"] == [1]
             @test diagnostics["block_counts"] == [1]

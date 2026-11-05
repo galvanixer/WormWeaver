@@ -79,7 +79,7 @@ function required_observable_metadata(observable, definition, histories)
             append!(required, ("species", "momenta", "tau_edges"))
         end
         return unique(required)
-    elseif definition.reduction == "sum"
+    elseif observable == "DensityCorrelation" || definition.reduction == "sum"
         return definition.metadata
     end
     return ()

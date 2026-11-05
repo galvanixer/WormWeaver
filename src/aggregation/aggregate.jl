@@ -7,6 +7,10 @@ const OBSERVABLE_DEFINITIONS = Dict(
         fields=("densityBySpecies", "particleNumberBySpecies", "totalParticleNumber"),
         optional_fields=(), metadata=("species",), reduction="mean",
     ),
+    "DensityCorrelation" => (
+        fields=("full", "total"), optional_fields=(), reduction="mean",
+        metadata=("displacements", "displacement_counts"),
+    ),
     "Energy" => (
         fields=("diagonalEnergy", "diagonalEnergyPerSite", "kineticEnergy",
                 "kineticEnergyPerSite", "totalEnergy", "totalEnergyPerSite"),
@@ -32,6 +36,27 @@ function observable_measurements(history::AbstractArray{<:Real}, counts; min_blo
     return isempty(shape) ? only(measurements) : reshape(measurements, shape)
 end
 
+"""Validate ordered component-pair histories and their saved displacement grid."""
+function validate_density_correlation(histories, metadata)
+    full, total = histories["full"], histories["total"]
+    ndims(full) == 4 && ndims(total) == 2 || throw(DimensionMismatch(
+        "DensityCorrelation requires component × component × displacement × block and displacement × block histories"))
+    size(full, 1) == size(full, 2) && size(full, 1) > 0 && size(full, 3) > 0 ||
+        throw(DimensionMismatch("DensityCorrelation requires nonempty, matching component axes and a nonempty displacement axis"))
+    size(total) == (size(full, 3), size(full, 4)) || throw(DimensionMismatch(
+        "DensityCorrelation full and total must have matching displacement and block axes"))
+    displacements, multiplicities = metadata["displacements"], metadata["displacement_counts"]
+    displacements isa AbstractMatrix{<:Integer} && !(eltype(displacements) <: Bool) &&
+        size(displacements, 2) > 0 || throw(ArgumentError(
+        "DensityCorrelation displacements must be an integer coordinate matrix"))
+    multiplicities isa AbstractVector{<:Integer} && !(eltype(multiplicities) <: Bool) &&
+        all(>(0), multiplicities) || throw(ArgumentError(
+        "DensityCorrelation displacement_counts must be positive integer pair counts"))
+    size(displacements, 1) == length(multiplicities) == size(full, 3) ||
+        throw(DimensionMismatch("DensityCorrelation displacement metadata must match the history displacement axis"))
+    return nothing
+end
+
 """Read and validate one observable, then dispatch to its summary calculation."""
 function read_observable_summary(file, observable, expected_blocks; min_blocks, blocking_diagnostics::Bool=false)
     definition = OBSERVABLE_DEFINITIONS[observable]
@@ -48,6 +73,8 @@ function read_observable_summary(file, observable, expected_blocks; min_blocks, 
         validate_particle_histogram(histories, counts, metadata)
     elseif observable == "SingleParticleGreenFunction"
         validate_single_particle_green(histories, counts, metadata)
+    elseif observable == "DensityCorrelation"
+        validate_density_correlation(histories, metadata)
     end
     if observable == "ParticlesHistogram"
         return particle_histogram_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
@@ -87,7 +114,7 @@ function mean_observable_summary(histories, counts, metadata; min_blocks, blocki
 end
 
 """
-    aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
+    aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
         min_blocks=10, blocking_diagnostics=false) -> DataFrame
 
 Obtain the manifest with refreshed local-log progress from `status_manifest`,
@@ -113,9 +140,19 @@ calculated in either mode.
 Summaries retain block/sample counts and
 observable metadata. Scalars and array shapes are preserved.
 `observables` must be a nonempty collection of unique supported names: `Density`,
-`Energy`, `Windings`, `ParticlesHistogram`, and `SingleParticleGreenFunction`.
-All five are selected by default.
+`Energy`, `Windings`, `ParticlesHistogram`, `SingleParticleGreenFunction`, and
+`DensityCorrelation`. All six are selected by default.
 Each results file is opened once; each observable uses its own sample counts.
+
+DensityCorrelation aggregates raw equal-time occupation correlations: full has
+component × component × displacement shape and total is a displacement vector.
+Both saved block-mean histories use sample-count weights and repeated-blocking
+errors; total is analyzed independently to preserve its correlated fluctuations.
+Required displacements and displacement_counts metadata retain their signed
+coordinates, pair multiplicities, and saved order. Component indices are not
+species IDs. Spatial pair averaging and imaginary-time averaging are already
+applied; no further normalization, normal ordering, or disconnected subtraction
+is performed. Same-site diagonal entries retain occupation squares.
 
 SingleParticleGreenFunction retains raw gREqualTimeHits summed over blocks as a
 species × displacement numeric matrix, plus scalar zSectorVisitCount and
@@ -177,7 +214,7 @@ compressibility uncertainties.
 Return the DataFrame without writing files. Use `save_aggregate` to aggregate and
 save the table as JLD2.
 """
-function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
+function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
                    min_blocks::Integer=10,
                    blocking_diagnostics::Bool=false)
     min_blocks >= 2 || throw(ArgumentError("min_blocks must be at least two"))
@@ -186,7 +223,7 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     selected = collect(observables)
     isempty(selected) && throw(ArgumentError("observables must not be empty"))
     all(name -> name isa AbstractString && haskey(OBSERVABLE_DEFINITIONS, name), selected) ||
-        throw(ArgumentError("supported observables are Density, Energy, Windings, ParticlesHistogram, and SingleParticleGreenFunction"))
+        throw(ArgumentError("supported observables are Density, Energy, Windings, ParticlesHistogram, SingleParticleGreenFunction, and DensityCorrelation"))
     allunique(selected) || throw(ArgumentError("observables must not contain duplicates"))
     root = abspath(study_dir)
     manifest = status_manifest(root)
@@ -224,7 +261,7 @@ end
 
 """
     save_aggregate(study_dir; output="aggregated.jld2", overwrite=false,
-        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
+        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
         min_blocks=10, blocking_diagnostics=false) -> DataFrame
 
 Call `aggregate` with the selected observables and calculation options, save its
@@ -239,7 +276,7 @@ For selections other than only `SingleParticleGreenFunction`, also save
 function save_aggregate(study_dir::AbstractString;
                         output::AbstractString="aggregated.jld2",
                         overwrite::Bool=false,
-                        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction"],
+                        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
                         min_blocks::Integer=10,
                         blocking_diagnostics::Bool=false)
     root = abspath(study_dir)

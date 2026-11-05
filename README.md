@@ -415,7 +415,7 @@ julia --project=. test/runtests.jl
 
 ## Aggregate observables
 
-Aggregate saved production-block density, energy, winding, particle histogram,
+Aggregate saved production-block density, density correlation, energy, winding, particle histogram,
 and available single-particle Green measurements into one row per simulation, retaining every column of
 the typed study manifest:
 
@@ -423,7 +423,7 @@ the typed study manifest:
 using WormWeaver, Measurements, JLD2
 
 study_dir = "scratch/LRBHQM2_alpha1p5_2026-10-05"
-table = aggregate(study_dir)  # Selects all five supported observables.
+table = aggregate(study_dir)  # Selects all six supported observables.
 density = table.Density[1]["densityBySpecies"]  # Vector of mean ± uncertainty.
 Measurements.value.(density)        # Species means.
 Measurements.uncertainty.(density)  # Repeated-blocking standard errors.
@@ -441,8 +441,8 @@ table = JLD2.load(joinpath(study_dir, "aggregated.jld2"), "aggregate")
 ```
 
 `observables` must be a nonempty vector, tuple, or set of unique supported names:
-`"Density"`, `"Energy"`, `"Windings"`, `"ParticlesHistogram"`, and
-`"SingleParticleGreenFunction"`. All five are
+`"Density"`, `"Energy"`, `"Windings"`, `"ParticlesHistogram"`,
+`"SingleParticleGreenFunction"`, and `"DensityCorrelation"`. All six are
 selected by default. Each selected observable adds a dictionary column.
 Aggregation obtains its manifest directly from `status_manifest(study_dir)`,
 including refreshed `status`, `completed_blocks`, `failed`, and `log_source`
@@ -472,6 +472,29 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
   "No Density measurements available." Undefined uncertainties are shown as
   "uncertainty unavailable" alongside the mean. The helper returns `nothing`,
   leaves the summary unchanged, and accepts `io` to capture or redirect its output.
+- `DensityCorrelation` contains `full` as a component × component × displacement
+  array of Measurements and `total` as a displacement vector. Each saved
+  block-mean history is combined with its own observable's sample-count weights
+  and repeated-blocking errors. The saved total is analyzed independently,
+  preserving correlated fluctuations between component pairs. Required
+  `displacements` and `displacement_counts` metadata retain signed coordinates,
+  pair multiplicities, and stored ordering, including distinct positive/negative
+  boundary bins. Component indices are not inferred species IDs. These raw
+  correlations already average equal-time occupation products over site pairs
+  and imaginary time: no further spatial or β normalization, normal ordering,
+  or disconnected subtraction is applied. Same-site diagonal entries include
+  occupation squares. Optional diagnostics contain `fullStandardError` and
+  `totalStandardError`, with blocking level as the final axis, plus the shared
+  block widths/counts and retained sample counts. Each simulation remains a
+  separate row; no covariance matrix or seed combination is produced.
+
+  ```julia
+  table = aggregate(study_dir; observables=["DensityCorrelation"])
+  correlations = table.DensityCorrelation[1]
+  correlations["full"][1, 2, 1]  # Component 1 × component 2 at the first stored displacement.
+  correlations["displacements"][1, :]
+  correlations["total"][1]
+  ```
 - `Energy` contains `diagonalEnergy`, `kineticEnergy`, and `totalEnergy`, and
   their `PerSite` counterparts.
   Use `describe_energy(table.Energy[1])` to print diagonal, kinetic, and total

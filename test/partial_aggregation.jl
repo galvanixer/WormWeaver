@@ -40,14 +40,14 @@
             else
                 n = saved_blocks[i]
                 write_combined_fixture(path; density_blocks=n, energy_blocks=n,
-                                       winding_blocks=n, histogram_blocks=n)
+                                       winding_blocks=n, histogram_blocks=n, correlation_blocks=n)
                 write_single_particle_green_fixture(path; counts=fill(10, n),
                                                     zcounts=ones(n), append=true)
             end
             push!(sources, path)
         end
         original = read.(sources)
-        table = @test_logs (:warn, r"Density has no saved blocks") (:warn, r"Energy has no saved blocks") (:warn, r"Windings has no saved blocks") (:warn, r"ParticlesHistogram has no saved blocks") (:warn, r"SingleParticleGreenFunction has no saved blocks") save_aggregate(root; blocking_diagnostics=true)
+        table = @test_logs (:warn, r"Density has no saved blocks") (:warn, r"Energy has no saved blocks") (:warn, r"Windings has no saved blocks") (:warn, r"ParticlesHistogram has no saved blocks") (:warn, r"SingleParticleGreenFunction has no saved blocks") (:warn, r"DensityCorrelation has no saved blocks") save_aggregate(root; blocking_diagnostics=true)
         @test table.simulation == labels
         @test isequal(table[:, names(manifest)], manifest)
         @test table.status == ["Pre Tuning", "Tuning", "Production Started", "Checkpoint 2",
@@ -59,7 +59,7 @@
         snapshot = status_manifest(root)
         @test isequal(table[:, names(snapshot)], snapshot)
         @test !any(startswith("manifest_status_"), readdir(root))
-        for name in ("Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction")
+        for name in ("Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation")
             @test all(ismissing, table[[1, 2, 8, 9], name])
             @test [table[i, name]["nblocks"] for i in 3:7] == saved_blocks[3:7]
         end
@@ -70,6 +70,7 @@
         @test all(isnan, Measurements.uncertainty.(table.Windings[3]["squaredWindingBySpecies"]))
         @test all(isnan, Measurements.uncertainty.(table.ParticlesHistogram[3]["totalParticleNumberProbability"]))
         @test all(isnan, Measurements.uncertainty.(table.SingleParticleGreenFunction[3]["grEqualTime"]))
+        @test all(isnan, Measurements.uncertainty.(table.DensityCorrelation[3]["full"]))
         # HDF5 histories, rather than a stale log count, determine the summary.
         @test table.Energy[7]["nblocks"] == 3
         @test Measurements.value(table.Energy[7]["totalEnergy"]) ≈ 1.5
@@ -82,7 +83,8 @@
         for (name, field) in (("Density", "densityBySpecies"), ("Energy", "totalEnergy"),
                               ("Windings", "squaredWindingBySpecies"),
                               ("ParticlesHistogram", "totalParticleNumberProbability"),
-                              ("SingleParticleGreenFunction", "grEqualTime"))
+                              ("SingleParticleGreenFunction", "grEqualTime"),
+                              ("DensityCorrelation", "full"))
             @test isequal(Measurements.value.(saved[3, name][field]),
                           Measurements.value.(table[3, name][field]))
             @test isequal(Measurements.uncertainty.(saved[3, name][field]),
