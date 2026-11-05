@@ -474,11 +474,34 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
   leaves the summary unchanged, and accepts `io` to capture or redirect its output.
 - `Energy` contains `diagonalEnergy`, `kineticEnergy`, and `totalEnergy`, and
   their `PerSite` counterparts.
+  Use `describe_energy(table.Energy[1])` to print diagonal, kinetic, and total
+  estimates side by side with their per-site values, in model energy units.
 - `Windings` contains `windingBySpecies`, `squaredWindingBySpecies`,
   `totalWinding`, and `squaredTotalWinding`. `windingCorrelationBySpecies` is
   included when saved; single-species runs may omit it. `periodic_axes` and
   `species_pairs` metadata are retained when present. Pair coflow and counterflow
   are derived as described below.
+  Use `describe_windings(table.Windings[1])` to print dimensionless means/squares
+  per component and axis, saved totals, and available pair correlations, coflow,
+  and counterflow. The report uses mathematical labels such as `⟨Wₐ⟩`, `⟨Wₐ²⟩`, `⟨Wₐ Wᵦ⟩`, and
+  the corresponding pair sums/differences; total moments sum over all components.
+  Rows use component-index labels `W₁`, `W₂`, … and mapped pairs such as `(W₁, W₃)`,
+  including multi-digit indices like `W₁₂`. These are not species IDs. Spatial
+  axes remain numbered; periodic/open boundaries
+  are shown when saved. Unknown boundaries, missing pair mappings, and unavailable
+  quantities are labeled explicitly; single-component runs have no component pairs.
+  Both describe helpers follow `describe_density`: they accept `missing`, print
+  saved block/sample counts and uncertainty method, mark undefined errors as
+  "uncertainty unavailable", support `io`, return `nothing`, and do not modify or
+  recalculate estimates. Windings reports apply no stiffness normalization.
+  Density, Energy, and Windings reports share aligned `OBSERVABLES`,
+  `MEASUREMENTS`, `PRODUCTION STATISTICS`, and `ESTIMATOR CONVENTIONS` sections.
+  Inventories identify shapes, axes, units, and meanings; Density and Energy also
+  show dictionary field names. Windings uses mathematical labels throughout and
+  adds `COMPONENTS AND AXES` information. Every estimate is displayed, counts use
+  digit grouping, and long conventions wrap without truncation. The conventions
+  describe sample-count-weighted block means and the saved uncertainty method;
+  they do not assert convergence.
 - `ParticlesHistogram` contains `particleNumberBySpeciesCounts`,
   `totalParticleNumberCounts`, and `zSectorSampleCount` as raw integer sums
   across blocks, plus normalized probabilities, particle-number moments, repeated-blocking errors,
@@ -499,6 +522,18 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
   totals and available grid metadata are retained; other time/frequency
   measurements are not summarized. Equal-time results are omitted when that
   histogram was not measured.
+
+Use `describe_single_particle_green(table.SingleParticleGreenFunction[1])` to
+inspect one saved summary. Its aligned sections show the observable inventory,
+first/last coordinate-grid entries, first stored measurement examples,
+production counts, and the saved estimator conventions. Complex examples show
+separate real/imaginary uncertainties; counts use digit grouping and coordinates
+use a consistent precision. Long conventions wrap instead of being truncated.
+Absent quantities say "Not present in this summary": metadata alone cannot tell
+whether a measurement was collected, and older aggregators omitted `gKTau`.
+Missing metadata is "Unavailable". Like the other describe helpers, it accepts
+`missing`, supports `io`, returns `nothing`, and does not read files, recompute
+estimates, or modify the input.
 
 Select only Green-function aggregation:
 
@@ -641,7 +676,21 @@ histograms.meanSquaredTotalParticleNumber[1]      # Total second moment.
 diagnostics = histograms.blocking_diagnostics[1]
 diagnostics["block_widths"]
 diagnostics["particleNumberBySpeciesStandardError"]  # Species × bin × level.
+
+describe_particles_histogram(table.ParticlesHistogram[1])
 ```
+
+`describe_particles_histogram` prints an aligned inventory, species/bin metadata,
+all saved first and second particle-number moments, and one distribution-overview
+row per species plus the total. The overview shows occupied-bin counts, observed
+particle-number ranges, the peak particle number, and its saved probability with
+uncertainty. Tied peaks select the smallest particle number and flag the number
+of tied bins. Observed ranges may contain empty bins; stored ranges and species
+capacities are shown separately. Full distributions remain in the summary arrays.
+Production counts and estimator conventions explain raw sums, normalization, and
+uncertainties. The function accepts `missing`, supports `io`, returns `nothing`,
+reads no files, and leaves the summary unchanged. Undefined uncertainties appear
+as "uncertainty unavailable"; missing metadata is identified explicitly.
 
 For each simulation, particle histograms sum every bin across all saved production
 blocks using checked integer addition. Species remain separate, zero-count bins
