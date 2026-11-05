@@ -2,6 +2,23 @@ import HDF5
 import Measurements
 import DataFrames
 import JLD2
+import SHA
+
+const AGGREGATION_CONFIG = """
+sampler:
+  multiworm_order: 1
+  moves:
+    - source: [0]
+      requests:
+        - kind: Open
+          target: [1]
+          weight: 1.0
+    - source: [1]
+      requests:
+        - kind: Close
+          target: [0]
+          weight: 1.0
+"""
 
 # Statistical fixtures also need the manifest paths and production log used by
 # the status precheck. Tests of specific statuses write their own logs instead.
@@ -16,13 +33,20 @@ function write_aggregation_manifest(path; manifest)
     if !hasproperty(manifest, :config)
         manifest.config = [joinpath("sim$i", "config.yaml") for i in 1:n]
     end
+    config_hashes = String[]
     for row in eachrow(manifest)
         folder = dirname(joinpath(dirname(path), row.config))
         mkpath(folder)
+        config_path = joinpath(dirname(path), row.config)
+        isfile(config_path) || write(config_path, AGGREGATION_CONFIG)
+        push!(config_hashes, bytes2hex(SHA.sha256(read(config_path))))
         target = row["run.blocks"]
         blocks = target isa Integer && !(target isa Bool) && target > 0 ? target : 1
         write(joinpath(folder, "simulation.log"),
               "PRODUCTION\n  Blocks $blocks\n  $blocks/$blocks 100% 0.001s\n")
+    end
+    if !hasproperty(manifest, :config_sha256)
+        manifest.config_sha256 = config_hashes
     end
     JLD2.jldsave(path; manifest)
 end
@@ -195,6 +219,48 @@ function write_combined_fixture(path; density_blocks=4, nspecies=2,
     end
 end
 
+@testset "G2 entry metadata is derived during aggregation" begin
+    mktempdir() do root
+        templates = joinpath(@__DIR__, "..", "templates", "multiwormqmc", "LRBHQM")
+        simulations = ["sim1", "sim2", "sim3", "sim4"]
+        configs = [joinpath(simulation, "config.yaml") for simulation in simulations]
+        for (simulation, variant) in zip(simulations[1:3], ("regular", "aligned", "singleworm"))
+            folder = joinpath(root, simulation)
+            mkpath(folder)
+            cp(joinpath(templates, "config_LRBHQM_$variant.yaml"), joinpath(folder, "config.yaml"))
+            write(joinpath(folder, "simulation.log"), "")
+        end
+        mkpath(joinpath(root, "sim4"))
+        write(joinpath(root, "sim4", "simulation.log"), "")
+
+        regular_hash = bytes2hex(SHA.sha256(read(joinpath(root, configs[1]))))
+        manifest = DataFrames.DataFrame(
+            study_id=fill("g2-aggregation", 4), simulation=simulations,
+            config=configs, output_file=fill("results.h5", 4),
+            config_sha256=Union{Missing,String}[regular_hash, repeat("0", 64), missing, missing],
+        )
+        manifest[!, "run.blocks"] = fill(1, 4)
+        manifest_path = joinpath(root, "manifest.jld2")
+        JLD2.jldsave(manifest_path; manifest)
+        csv_path = joinpath(root, "manifest.csv")
+        write(csv_path, "original manifest")
+        sources = [manifest_path, csv_path, [joinpath(root, config) for config in configs[1:3]]...]
+        original_bytes = read.(sources)
+
+        table = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") aggregate(root; observables=["Energy"])
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes", "Energy"]]
+        @test isequal(table.g2_entry_modes, [(:regular,), missing, (), missing])
+        @test all(==(0), table.completed_blocks)
+        @test all(ismissing, table.Energy)
+        @test read.(sources) == original_bytes
+
+        saved = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") save_aggregate(root; observables=["Energy"])
+        @test isequal(saved, table)
+        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)
+        @test read.(sources) == original_bytes
+    end
+end
+
 @testset "Shared observable aggregation" begin
     mktempdir() do root
         path = joinpath(root, "results.h5")
@@ -203,7 +269,6 @@ end
         manifest[!, "run.blocks"] = [4]
         manifest_path = joinpath(root, "manifest.jld2")
         write_aggregation_manifest(manifest_path; manifest)
-        write(joinpath(root, "config.yaml"), "original config")
         write(joinpath(root, "manifest.csv"), "original manifest")
         sources = [path, manifest_path, joinpath(root, "config.yaml"), joinpath(root, "manifest.csv")]
         original_bytes = read.(sources)
@@ -212,7 +277,8 @@ end
         table = aggregate(root; min_blocks=2)
         @test readdir(root) == before_files
         @test isequal(aggregate(root; min_blocks=2), table)
-        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"]]
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"]]
+        @test table.g2_entry_modes == [()]
         @test ismissing(table.SingleParticleGreenFunction[1])
         @test isequal(table[:, names(manifest)], manifest)
         @test table.Density[1]["species"] == [1, 2]
@@ -259,10 +325,10 @@ end
         @test_throws ArgumentError save_aggregate(root)
         @test isequal(save_aggregate(root; min_blocks=2, overwrite=true), table)
         subset = aggregate(root; observables=("Windings", "Energy"))
-        @test names(subset) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Windings", "Energy"]]
+        @test names(subset) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["Windings", "Energy"]]
         custom_output = joinpath(root, "nested", "custom.jld2")
         save_aggregate(root; observables=["Energy"], output=custom_output)
-        @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["Energy"]]
+        @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["Energy"]]
         for source in (path, joinpath(root, "config.yaml"))
             @test_throws ArgumentError save_aggregate(root; output=source, overwrite=true)
         end
@@ -339,7 +405,7 @@ end
         before = read.([path, single_path, manifest_path])
 
         table = save_aggregate(root; observables=["ParticlesHistogram"], blocking_diagnostics=true)
-        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["ParticlesHistogram"]]
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["ParticlesHistogram"]]
         @test isequal(table[:, names(manifest)], manifest)
         @test DataFrames.nrow(table) == 2  # Replicas remain separate rows.
         histogram = table.ParticlesHistogram[1]

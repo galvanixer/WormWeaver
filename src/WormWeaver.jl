@@ -2,6 +2,8 @@ module WormWeaver
 
 import Printf
 
+include("g2_entry_modes.jl")
+
 include("study_generation/study.jl")
 include("study_generation/init_study.jl")
 include("study_generation/init_config.jl")
@@ -23,6 +25,7 @@ include("aggregation/observable_table.jl")
 include("aggregation/describe_observables.jl")
 
 export generate_study, init_study, init_config, aggregate, save_aggregate, observable_table
+export g2_entry_modes
 export describe_density, describe_energy, describe_windings, describe_single_particle_green
 export describe_particles_histogram
 export green_ratio_statistics, study_status, study_log_status, status_summary, status_manifest

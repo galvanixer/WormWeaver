@@ -156,6 +156,23 @@ The required `project` field is a nonblank string identifying the broader resear
 
 The root YAML files preserve the original study definition and template verbatim. The copied study definition is a provenance record: its relative paths still refer to the original study location.
 
+Inspect scheduled G2 entry directly from a simulation config:
+
+```julia
+g2_entry_modes("sim1/config.yaml")  # e.g. (:anti_aligned,)
+g2_entry_modes(config)             # Also accepts a loaded YAML dictionary.
+```
+
+The result lists enabled modes in the order `:regular`, `:aligned`,
+`:anti_aligned`, with `()` for no scheduled G2 opening. Mixed schedules return
+multiple modes; unrestricted `OpenColocated` permits both colocated alignments.
+Only positive-weight G1 → G2 openings from sources reachable from Z count.
+`sampler.multiworm_order=2` alone does not establish G2 access. This inspects
+schedule connectivity, not physical proposal feasibility or acceptance.
+Unreadable files, invalid YAML, or uninterpretable required schedule fields
+return `missing` with a warning. The inspector does not validate unrelated
+simulation settings and does not modify its input.
+
 Both manifests have the same columns and one row per simulation:
 
 | Columns | Contents |
@@ -451,9 +468,18 @@ Aggregation obtains its manifest directly from `status_manifest(study_dir)`,
 including refreshed `status`, `completed_blocks`, `failed`, and `log_source`
 columns from local logs. Existing progress columns are refreshed in memory;
 the source manifest is not modified and no monitoring snapshot is saved.
+Every aggregate also adds `g2_entry_modes`, derived from each row's config even
+when that simulation has no completed blocks. If a nonmissing `config_sha256`
+is present, the current config must match it; a read failure or mismatch leaves
+the derived value `missing` and emits a warning. Older manifests without a
+recorded hash are inspected without checksum verification. This derived column
+is saved in `aggregated.jld2`, while `manifest.jld2` and `manifest.csv` remain
+unchanged.
 The manifest must contain `study_id`, `simulation`, `config`, `output_file`,
 and `run.blocks`, with nonblank study IDs and unique `(study_id, simulation)`
 keys. Existing manifest columns with selected observable names are rejected.
+An existing `g2_entry_modes` manifest column is also rejected because this
+metadata is owned by aggregation.
 
 Aggregation uses this refreshed manifest to skip simulations
 with zero completed production blocks. Every simulation retains its manifest

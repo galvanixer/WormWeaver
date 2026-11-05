@@ -234,7 +234,7 @@ end
         source_bytes = read.([path, manifest_path])
         table = save_aggregate(root; observables=["SingleParticleGreenFunction"])
         summary = table.SingleParticleGreenFunction[1]
-        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source"]; ["SingleParticleGreenFunction"]]
+        @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["SingleParticleGreenFunction"]]
         @test summary["gREqualTimeHits"] == dropdims(sum(fixture.hits; dims=3); dims=3)
         @test size(summary["gREqualTimeHits"]) == (2, 3)
         @test eltype(summary["gREqualTimeHits"]) == Float64

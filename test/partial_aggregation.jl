@@ -28,6 +28,9 @@
         for i in eachindex(labels)
             folder = joinpath(root, "job$i")
             mkpath(folder)
+            config_path = joinpath(root, manifest.config[i])
+            write(config_path, AGGREGATION_CONFIG)
+            push!(sources, config_path)
             if logs[i] !== nothing
                 logpath = joinpath(folder, "simulation.log")
                 write(logpath, logs[i])
@@ -56,6 +59,7 @@
         @test table.failed == [false, true, false, false, false, true, false, false, false]
         @test table.completed_blocks == [0, 0, 1, 2, 4, 1, 1, 1, 0]
         @test table.log_source == [fill("local", 8); "none"]
+        @test table.g2_entry_modes == fill((), length(labels))
         snapshot = status_manifest(root)
         @test isequal(table[:, names(snapshot)], snapshot)
         @test !any(startswith("manifest_status_"), readdir(root))

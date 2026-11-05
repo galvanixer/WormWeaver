@@ -1,6 +1,8 @@
 using Test
 using WormWeaver
 
+include("g2_entry_modes.jl")
+
 include("study.jl")
 
 include("init_study.jl")

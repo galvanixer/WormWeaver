@@ -1,6 +1,7 @@
 import DataFrames
 import HDF5
 import JLD2
+import SHA
 
 const OBSERVABLE_DEFINITIONS = Dict(
     "Density" => (
@@ -123,6 +124,32 @@ function mean_observable_summary(histories, counts, metadata; min_blocks, blocki
     return summary
 end
 
+"""Derive G2 entry modes from manifest configs, verifying recorded config hashes."""
+function aggregate_g2_entry_modes(root, manifest)
+    verify_hash = "config_sha256" in names(manifest)
+    modes = Union{Missing,Tuple{Vararg{Symbol}}}[missing for _ in 1:DataFrames.nrow(manifest)]
+    for (i, row) in enumerate(eachrow(manifest))
+        path = normpath(joinpath(root, row.config))
+        expected_hash = verify_hash ? row.config_sha256 : missing
+        if !ismissing(expected_hash)
+            actual_hash = try
+                bytes2hex(SHA.sha256(read(path)))
+            catch err
+                err isa InterruptException && rethrow()
+                @warn "Cannot verify configuration for G2 entry inspection; leaving g2_entry_modes missing" path manifest_row=i exception=err
+                continue
+            end
+            if !(expected_hash isa AbstractString) ||
+               lowercase(strip(expected_hash)) != actual_hash
+                @warn "Configuration checksum does not match manifest; leaving g2_entry_modes missing" path manifest_row=i expected_hash actual_hash
+                continue
+            end
+        end
+        modes[i] = g2_entry_modes(path)
+    end
+    return modes
+end
+
 """
     aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
         min_blocks=10, blocking_diagnostics=false) -> DataFrame
@@ -130,7 +157,12 @@ end
 Obtain the manifest with refreshed local-log progress from `status_manifest`,
 then read each simulation's HDF5 block histories. Preserve its rows and all columns,
 including `status`, `completed_blocks`, `failed`, and `log_source`, and add a
-dictionary column for each selected observable. The source manifest must include
+`g2_entry_modes` column derived from every simulation config, followed by a
+dictionary column for each selected observable. Derive G2 entry modes even for
+simulations without completed blocks. When `config_sha256` is recorded, require
+the current config bytes to match it; otherwise leave the value missing with a
+warning. Manifests without recorded hashes are inspected without checksum
+verification. The source manifest must include
 `study_id`, `simulation`, `config`, `output_file`, and `run.blocks`, with nonblank
 study IDs and unique `(study_id, simulation)` keys. Simulations with zero
 logged completed blocks are skipped, retaining rows with missing observable
@@ -266,8 +298,11 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
         throw(ArgumentError("manifest must contain output_file and run.blocks"))
     any(name -> name in names(manifest), selected) &&
         throw(ArgumentError("manifest already contains a selected observable column"))
+    "g2_entry_modes" in names(manifest) &&
+        throw(ArgumentError("manifest must not contain the derived g2_entry_modes column"))
 
     table = DataFrames.DataFrame(manifest; copycols=true)
+    table[!, "g2_entry_modes"] = aggregate_g2_entry_modes(root, manifest)
     for observable in selected
         table[!, observable] = Union{Missing,Dict{String,Any}}[missing for _ in 1:DataFrames.nrow(table)]
     end
