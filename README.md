@@ -415,7 +415,7 @@ julia --project=. test/runtests.jl
 
 ## Aggregate observables
 
-Aggregate saved production-block density, density correlation, energy, winding, particle histogram,
+Aggregate saved production-block density, density correlation, static structure factor, energy, winding, particle histogram,
 and available single-particle Green measurements into one row per simulation, retaining every column of
 the typed study manifest:
 
@@ -423,7 +423,7 @@ the typed study manifest:
 using WormWeaver, Measurements, JLD2
 
 study_dir = "scratch/LRBHQM2_alpha1p5_2026-10-05"
-table = aggregate(study_dir)  # Selects all six supported observables.
+table = aggregate(study_dir)  # Selects all eight supported observables.
 density = table.Density[1]["densityBySpecies"]  # Vector of mean ± uncertainty.
 Measurements.value.(density)        # Species means.
 Measurements.uncertainty.(density)  # Repeated-blocking standard errors.
@@ -442,8 +442,11 @@ table = JLD2.load(joinpath(study_dir, "aggregated.jld2"), "aggregate")
 
 `observables` must be a nonempty vector, tuple, or set of unique supported names:
 `"Density"`, `"Energy"`, `"Windings"`, `"ParticlesHistogram"`,
-`"SingleParticleGreenFunction"`, and `"DensityCorrelation"`. All six are
+`"SingleParticleGreenFunction"`, `"DensityCorrelation"`, `"StaticStructureFactor"`,
+and `"CounterflowGreenFunction"`. All eight are
 selected by default. Each selected observable adds a dictionary column.
+`CounterflowGreenFunction` follows `StaticStructureFactor` as the eighth default column;
+specify `observables` explicitly to retain an earlier output schema.
 Aggregation obtains its manifest directly from `status_manifest(study_dir)`,
 including refreshed `status`, `completed_blocks`, `failed`, and `log_source`
 columns from local logs. Existing progress columns are refreshed in memory;
@@ -461,7 +464,8 @@ For eligible runs, all valid available blocks are aggregated, including partial
 histories. Each observable's `nblocks` gives its actual saved block count;
 `completed_blocks` reflects the log, which can lag behind HDF5 writes.
 `min_blocks` controls additional blocking levels, not the minimum history length
-for aggregation. A one-block history retains its mean with a NaN uncertainty.
+for aggregation. A one-block mean history retains its mean with a NaN uncertainty;
+raw counterflow counts are summed without uncertainty estimates.
 
 - `Density` contains `densityBySpecies`, `particleNumberBySpecies`, and
   `totalParticleNumber`, plus `species` labels when present.
@@ -495,6 +499,85 @@ for aggregation. A one-block history retains its mean with a NaN uncertainty.
   correlations["displacements"][1, :]
   correlations["total"][1]
   ```
+- `StaticStructureFactor` contains `structureFactorBySpeciesPair` as a
+  component × component × momentum array of `Complex{Measurement{Float64}}`
+  and `structureFactorByMomentum` as a real total-density vector of Measurements.
+  Both use saved `sampleCount` weights and maximum repeated-blocking standard
+  errors. Real and imaginary parts are analyzed separately for every stored
+  pair entry, preserving their signs without symmetrization. Covariances between
+  entries or real/imaginary parts are not retained. Use the independently
+  aggregated total for its uncertainty; summing pair Measurements loses the
+  correlated fluctuations of that channel.
+
+  Required `momentum_indices` (integer) and `momenta` (finite real) matrices have
+  matching momentum × spatial-dimension shapes and retain their saved ordering.
+  These describe the saved Fourier grid, including for open boundaries;
+  component positions do not identify physical species IDs.
+  The dimensionless raw convention is
+  `S_st(k) = ⟨∫₀¹ du ρ_s(k,u) conj(ρ_t(k,u))⟩ / L`,
+  where `ρ_s(k,u) = Σ_j n_js(u) exp(i k⋅r_j)` and `L` is the site count.
+  Imaginary-time averaging and site normalization are already applied. No
+  additional β/site factor, normal ordering, or disconnected subtraction is
+  performed; the zero-momentum channel retains particle-number second moments.
+  Only the current complex pair dataset is supported; obsolete split real and
+  imaginary histories are rejected. Structural/numeric validation does not
+  enforce Hermiticity, positivity, or equality of the saved total to a pair sum.
+
+  ```julia
+  table = aggregate(study_dir; observables=["StaticStructureFactor"],
+                    min_blocks=10, blocking_diagnostics=true)
+  structure = table.StaticStructureFactor[1]
+  pair = structure["structureFactorBySpeciesPair"][1, 2, 1]
+  Measurements.value(real(pair)), Measurements.uncertainty(imag(pair))
+  structure["structureFactorByMomentum"][1]
+  structure["momenta"][1, :]
+  ```
+
+  Summaries retain `nblocks`, `nsamples`, `min_blocks`, and `error_method`.
+  Optional `blocking_diagnostics` holds
+  `structureFactorBySpeciesPairRealStandardError` and
+  `structureFactorBySpeciesPairImaginaryStandardError` with component × component
+  × momentum × level axes, and `structureFactorByMomentumStandardError` with
+  momentum × level axes, plus `block_widths`, `block_counts`, and `sample_counts`.
+  Diagnostics do not change estimates. Partial histories retain all saved blocks;
+  a single block retains its mean with NaN uncertainties. Missing groups and empty
+  histories leave the cell `missing`, following the other observables.
+- `CounterflowGreenFunction` retains `gREqualTimeHits` as a numeric displacement
+  vector summed across saved blocks, plus scalar `zSectorVisitCount` and
+  `sampleCount` sums, `nsamples` (equal to `sampleCount`), `nblocks`, and
+  `aggregation_method="sum"`. These are unweighted finite-window diagnostic
+  counts. Hits are summed directly, without multiplying by block sample counts
+  or dividing by Z visits. They are not a physically normalized counterflow
+  correlator. For a sampling-rate diagnostic, divide the summed hits by
+  `sampleCount`; this still has sector and window dependence.
+
+  Required `channel="counterflow"` and ordered `species_pair` identify the
+  measurement. The first species defines the directed endpoint separation;
+  species and signed displacement ordering are preserved without sorting or
+  symmetrization. When hits exist, required `displacements`,
+  `displacement_vectors`, and positive `displacement_counts` describe their axis,
+  while `beta`, `equal_time_window`, and `equal_time_convention` specify the
+  one-sided window with `0 < equal_time_window < beta`. Optional scalar
+  `production_log_eta` and other saved coordinate/convention metadata are retained
+  without applying a normalization. Counts must be finite and nonnegative;
+  every saved production block must have positive Z visits.
+
+  ```julia
+  table = aggregate(study_dir; observables=["CounterflowGreenFunction"])
+  counterflow = table.CounterflowGreenFunction[1]
+  counterflow["gREqualTimeHits"]  # Raw summed counts, when measured.
+  counterflow["species_pair"]
+  counterflow["displacements"]
+  ```
+
+  A missing hit dataset leaves that field absent, retaining the Z/sample counts
+  and available metadata; an all-zero measured histogram remains a zero vector.
+  Completed blocks from unfinished runs and single-block histories are eligible.
+  Missing groups and empty histories produce `missing` cells with warnings.
+  `gRTau`, `gKTau`, `gKOmega`, and `gROmega` are omitted with a warning when
+  present. No uncertainties, `error_method`, or `blocking_diagnostics` are added,
+  even with `blocking_diagnostics=true`. Counterflow-only JLD2 output contains
+  the `aggregate` table without top-level repeated-blocking metadata.
 - `Energy` contains `diagonalEnergy`, `kineticEnergy`, and `totalEnergy`, and
   their `PerSite` counterparts.
   Use `describe_energy(table.Energy[1])` to print diagonal, kinetic, and total

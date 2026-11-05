@@ -14,6 +14,10 @@ function read_observable_data(file, observable, definition)
         return missing
     end
     group = file[group_path]
+    if observable == "CounterflowGreenFunction"
+        omitted = filter(field -> haskey(group, field), ("gRTau", "gKTau", "gKOmega", "gROmega"))
+        isempty(omitted) || @warn "CounterflowGreenFunction representations omitted; only raw equal-time counts are aggregated" fields=omitted file=HDF5.filename(file)
+    end
     haskey(group, "sampleCount") || throw(ArgumentError("Missing $observable/sampleCount"))
     counts = read(group["sampleCount"])
     counts isa AbstractVector{<:Real} || throw(ArgumentError("$observable/sampleCount must be a numeric vector"))
@@ -70,7 +74,10 @@ end
 
 """Select required metadata explicitly for the observable and available histories."""
 function required_observable_metadata(observable, definition, histories)
-    if observable == "SingleParticleGreenFunction"
+    if observable == "CounterflowGreenFunction"
+        return haskey(histories, "gREqualTimeHits") ?
+            ("species_pair", "channel", COUNTERFLOW_EQUAL_TIME_METADATA...) : ("species_pair", "channel")
+    elseif observable == "SingleParticleGreenFunction"
         required = String[]
         if haskey(histories, "gREqualTimeHits")
             append!(required, SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA)
@@ -79,7 +86,7 @@ function required_observable_metadata(observable, definition, histories)
             append!(required, ("species", "momenta", "tau_edges"))
         end
         return unique(required)
-    elseif observable == "DensityCorrelation" || definition.reduction == "sum"
+    elseif observable in ("DensityCorrelation", "StaticStructureFactor") || definition.reduction == "sum"
         return definition.metadata
     end
     return ()

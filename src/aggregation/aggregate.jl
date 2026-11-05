@@ -17,6 +17,8 @@ const OBSERVABLE_DEFINITIONS = Dict(
         optional_fields=(), metadata=(), reduction="mean",
     ),
     "Windings" => WINDINGS_DEFINITION,
+    "StaticStructureFactor" => STATIC_STRUCTURE_FACTOR_DEFINITION,
+    "CounterflowGreenFunction" => COUNTERFLOW_GREEN_DEFINITION,
     "SingleParticleGreenFunction" => SINGLE_PARTICLE_GREEN_DEFINITION,
     "ParticlesHistogram" => (
         fields=("particleNumberBySpeciesCounts", "totalParticleNumberCounts", "zSectorSampleCount"),
@@ -75,6 +77,10 @@ function read_observable_summary(file, observable, expected_blocks; min_blocks, 
         validate_single_particle_green(histories, counts, metadata)
     elseif observable == "DensityCorrelation"
         validate_density_correlation(histories, metadata)
+    elseif observable == "StaticStructureFactor"
+        validate_static_structure_factor(histories, metadata)
+    elseif observable == "CounterflowGreenFunction"
+        validate_counterflow_green(histories, counts, metadata)
     end
     if observable == "ParticlesHistogram"
         return particle_histogram_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
@@ -82,6 +88,10 @@ function read_observable_summary(file, observable, expected_blocks; min_blocks, 
         return single_particle_green_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
     elseif observable == "Windings"
         return windings_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
+    elseif observable == "StaticStructureFactor"
+        return static_structure_factor_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
+    elseif observable == "CounterflowGreenFunction"
+        return counterflow_green_summary(histories, counts, metadata)
     end
     return mean_observable_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
 end
@@ -114,7 +124,7 @@ function mean_observable_summary(histories, counts, metadata; min_blocks, blocki
 end
 
 """
-    aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
+    aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
         min_blocks=10, blocking_diagnostics=false) -> DataFrame
 
 Obtain the manifest with refreshed local-log progress from `status_manifest`,
@@ -140,8 +150,8 @@ calculated in either mode.
 Summaries retain block/sample counts and
 observable metadata. Scalars and array shapes are preserved.
 `observables` must be a nonempty collection of unique supported names: `Density`,
-`Energy`, `Windings`, `ParticlesHistogram`, `SingleParticleGreenFunction`, and
-`DensityCorrelation`. All six are selected by default.
+`Energy`, `Windings`, `ParticlesHistogram`, `SingleParticleGreenFunction`,
+`DensityCorrelation`, `StaticStructureFactor`, and `CounterflowGreenFunction`. All eight are selected by default.
 Each results file is opened once; each observable uses its own sample counts.
 
 DensityCorrelation aggregates raw equal-time occupation correlations: full has
@@ -153,6 +163,31 @@ coordinates, pair multiplicities, and saved order. Component indices are not
 species IDs. Spatial pair averaging and imaginary-time averaging are already
 applied; no further normalization, normal ordering, or disconnected subtraction
 is performed. Same-site diagonal entries retain occupation squares.
+
+StaticStructureFactor retains `structureFactorBySpeciesPair` as a component ×
+component × momentum array of Complex{Measurement{Float64}} and the independently
+analyzed real `structureFactorByMomentum` total. Each complex entry has separate
+real and imaginary maximum repeated-blocking errors; no covariances are retained.
+Both histories use their saved sample-count weights. Required `momentum_indices`
+and `momenta` matrices retain the saved Fourier-grid order. Component indices are
+not species IDs. Raw equal-time occupation products are already imaginary-time
+averaged and site-normalized; no extra β/site factor, disconnected subtraction,
+normal ordering, or symmetrization is applied. Only the current complex dataset
+layout is supported. Optional diagnostics append blocking level to each array,
+using `structureFactorBySpeciesPairRealStandardError`,
+`structureFactorBySpeciesPairImaginaryStandardError`, and
+`structureFactorByMomentumStandardError`.
+
+CounterflowGreenFunction retains raw `gREqualTimeHits` summed over saved blocks
+as a displacement vector, plus scalar sums of `zSectorVisitCount` and
+`sampleCount`, `nsamples`, `nblocks`, and `aggregation_method="sum"`. Hits are
+optional; absent hits do not imply a zero histogram. Require positive Z visits
+in each saved block, preserve the ordered `species_pair` and signed displacement
+metadata, and validate the one-sided finite-time window when hits exist.
+`production_log_eta` is optional metadata and is not applied. No physical
+normalization, uncertainty estimates, or blocking curves are computed, even with
+`blocking_diagnostics=true`. Warn when other time/frequency representations are
+present but omitted. These finite-window counts are not a normalized correlator.
 
 SingleParticleGreenFunction retains raw gREqualTimeHits summed over blocks as a
 species × displacement numeric matrix, plus scalar zSectorVisitCount and
@@ -214,7 +249,7 @@ compressibility uncertainties.
 Return the DataFrame without writing files. Use `save_aggregate` to aggregate and
 save the table as JLD2.
 """
-function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
+function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
                    min_blocks::Integer=10,
                    blocking_diagnostics::Bool=false)
     min_blocks >= 2 || throw(ArgumentError("min_blocks must be at least two"))
@@ -223,7 +258,7 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     selected = collect(observables)
     isempty(selected) && throw(ArgumentError("observables must not be empty"))
     all(name -> name isa AbstractString && haskey(OBSERVABLE_DEFINITIONS, name), selected) ||
-        throw(ArgumentError("supported observables are Density, Energy, Windings, ParticlesHistogram, SingleParticleGreenFunction, and DensityCorrelation"))
+        throw(ArgumentError("supported observables are Density, Energy, Windings, ParticlesHistogram, SingleParticleGreenFunction, DensityCorrelation, StaticStructureFactor, and CounterflowGreenFunction"))
     allunique(selected) || throw(ArgumentError("observables must not contain duplicates"))
     root = abspath(study_dir)
     manifest = status_manifest(root)
@@ -261,7 +296,7 @@ end
 
 """
     save_aggregate(study_dir; output="aggregated.jld2", overwrite=false,
-        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
+        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
         min_blocks=10, blocking_diagnostics=false) -> DataFrame
 
 Call `aggregate` with the selected observables and calculation options, save its
@@ -270,13 +305,14 @@ The output path is relative to the study directory unless absolute. Create paren
 directories as needed. Existing outputs require `overwrite=true`; source configs,
 logs, and results are protected from replacement, and symlink outputs are rejected.
 
-For selections other than only `SingleParticleGreenFunction`, also save
+For selections containing observables other than `SingleParticleGreenFunction`
+and `CounterflowGreenFunction`, also save
 `error_method="repeated blocking"` and `min_blocks` as top-level metadata.
 """
 function save_aggregate(study_dir::AbstractString;
                         output::AbstractString="aggregated.jld2",
                         overwrite::Bool=false,
-                        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation"],
+                        observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
                         min_blocks::Integer=10,
                         blocking_diagnostics::Bool=false)
     root = abspath(study_dir)
@@ -300,7 +336,7 @@ function save_aggregate(study_dir::AbstractString;
         throw(ArgumentError("output cannot replace a source config, log, or results file"))
 
     mkpath(dirname(destination))
-    if all(==("SingleParticleGreenFunction"), observables)
+    if all(name -> name in ("SingleParticleGreenFunction", "CounterflowGreenFunction"), observables)
         JLD2.jldsave(destination; aggregate=table)
     else
         JLD2.jldsave(destination; aggregate=table, error_method="repeated blocking", min_blocks)
