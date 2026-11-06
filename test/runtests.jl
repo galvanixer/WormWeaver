@@ -7,6 +7,7 @@ include("study.jl")
 
 include("init_study.jl")
 include("init_config.jl")
+include("utilities.jl")
 include("aggregation.jl")
 include("density_correlation.jl")
 include("static_structure_factor.jl")
