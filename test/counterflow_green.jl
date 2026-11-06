@@ -48,8 +48,8 @@
         end
         enabled = save_aggregate(root; observables=["CounterflowGreenFunction"], blocking_diagnostics=true)
         @test isequal(enabled, table)
-        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)
-        @test Set(keys(JLD2.load(joinpath(root, "aggregated.jld2")))) == Set(["aggregate"])
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
+        @test Set(keys(JLD2.load(default_aggregate_path(root)))) == Set(["aggregate"])
         @test read(path) == original
         @test observable_table(table.CounterflowGreenFunction).species_pair[1] == [2, 1]
 

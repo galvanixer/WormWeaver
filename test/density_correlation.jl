@@ -74,7 +74,7 @@
         @test size(diagnostics["totalStandardError"]) == (3, 2)
         @test diagnostics["fullStandardError"][1, 1, 1, :] ≈ [original_error, 1.72]
         @test all(iszero, diagnostics["totalStandardError"])
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
+        saved = JLD2.load(default_aggregate_path(root), "aggregate")
         @test isequal(saved, diagnosed)
         @test read(path) == original
 

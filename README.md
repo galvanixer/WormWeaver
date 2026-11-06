@@ -454,7 +454,8 @@ density_table = aggregate(study_dir; observables=["Density"])
 table = save_aggregate(study_dir)
 
 # Read the saved table later:
-table = JLD2.load(joinpath(study_dir, "aggregated.jld2"), "aggregate")
+study_name = last(splitpath(abspath(study_dir)))
+table = JLD2.load(joinpath(study_dir, "$(study_name)_aggregated.jld2"), "aggregate")
 ```
 
 `observables` must be a nonempty vector, tuple, or set of unique supported names:
@@ -473,8 +474,8 @@ when that simulation has no completed blocks. If a nonmissing `config_sha256`
 is present, the current config must match it; a read failure or mismatch leaves
 the derived value `missing` and emits a warning. Older manifests without a
 recorded hash are inspected without checksum verification. This derived column
-is saved in `aggregated.jld2`, while `manifest.jld2` and `manifest.csv` remain
-unchanged.
+is saved in the aggregate output, while `manifest.jld2` and `manifest.csv`
+remain unchanged.
 The manifest must contain `study_id`, `simulation`, `config`, `output_file`,
 and `run.blocks`, with nonblank study IDs and unique `(study_id, simulation)`
 keys. Existing manifest columns with selected observable names are rejected.
@@ -922,7 +923,7 @@ reliable joint errors on variance or compressibility.
 
 Independent runs remain separate rows. Original HDF5 block histories remain
 unchanged, and existing saved aggregates are refreshed only by explicitly calling
-`save_aggregate` (with `overwrite=true` if the output already exists).
+`save_aggregate`. Existing aggregate outputs are replaced by default.
 
 To turn an observable's dictionary column into its own DataFrame:
 
@@ -954,22 +955,26 @@ rule does not certify an error plateau. Component uncertainties do not reconstru
 covariance; use directly aggregated totals and saved squares for their errors.
 
 `aggregate` returns the DataFrame without writing files. To aggregate and save,
-use `save_aggregate`, which calls `aggregate`, writes `aggregated.jld2` in the
-study directory, and returns the same DataFrame:
+use `save_aggregate`, which calls `aggregate`, writes
+`<study directory>_aggregated.jld2` in the study directory, and returns the same
+DataFrame:
 
 ```julia
 table = aggregate(study_dir)  # In memory only.
 table = save_aggregate(study_dir)  # Aggregate and save.
-table = save_aggregate(study_dir; overwrite=true)  # Refresh an existing file.
+table = save_aggregate(study_dir; overwrite=false)  # Reject an existing file.
 table = save_aggregate(study_dir; observables=["Density", "Energy"],
     min_blocks=10, blocking_diagnostics=true, output="analysis/summary.jld2")
 ```
 
 Calculation options (`observables`, `min_blocks`, and `blocking_diagnostics`)
 work with both functions. Only `save_aggregate` accepts `output` and `overwrite`.
-Output paths are relative to the study directory unless absolute. Existing files
-require `overwrite=true`; source configs, logs, and results are protected from
-replacement. The JLD2 table is stored under the `aggregate` key.
+When `output` is omitted, its filename is derived from the normalized study
+directory name. Output paths are relative to the study directory unless absolute.
+Existing files are replaced by default; set `overwrite=false` to reject
+replacement. A default filename cannot be derived for a filesystem-root study
+path because it has no directory name. Source configs, logs, and results remain
+protected from replacement. The JLD2 table is stored under the `aggregate` key.
 
 Missing results, absent selected groups, and empty observable histories retain
 their manifest rows with missing cells and warnings. Nonempty partial histories

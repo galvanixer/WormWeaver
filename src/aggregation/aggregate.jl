@@ -330,27 +330,36 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
 end
 
 """
-    save_aggregate(study_dir; output="aggregated.jld2", overwrite=false,
+    save_aggregate(study_dir; output=nothing, overwrite=true,
         observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
         min_blocks=10, blocking_diagnostics=false) -> DataFrame
 
 Call `aggregate` with the selected observables and calculation options, save its
 DataFrame under the `aggregate` key in a JLD2 file, and return that DataFrame.
-The output path is relative to the study directory unless absolute. Create parent
-directories as needed. Existing outputs require `overwrite=true`; source configs,
-logs, and results are protected from replacement, and symlink outputs are rejected.
+By default, write `<study directory>_aggregated.jld2` in the study directory.
+An explicit output path is relative to the study directory unless absolute.
+Create parent directories as needed. Existing outputs are replaced by default;
+set `overwrite=false` to reject replacement. Source configs, logs, and results
+are protected from replacement, and symlink outputs are rejected. A default
+filename cannot be derived for filesystem root `/` because it has no directory
+name.
 
 For selections containing observables other than `SingleParticleGreenFunction`
 and `CounterflowGreenFunction`, also save
 `error_method="repeated blocking"` and `min_blocks` as top-level metadata.
 """
 function save_aggregate(study_dir::AbstractString;
-                        output::AbstractString="aggregated.jld2",
-                        overwrite::Bool=false,
+                        output::Union{Nothing,AbstractString}=nothing,
+                        overwrite::Bool=true,
                         observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
                         min_blocks::Integer=10,
                         blocking_diagnostics::Bool=false)
     root = abspath(study_dir)
+    if output === nothing
+        dirname(root) == root &&
+            throw(ArgumentError("cannot derive an aggregate filename from filesystem root: $root"))
+        output = "$(last(splitpath(root)))_aggregated.jld2"
+    end
     isempty(strip(output)) && throw(ArgumentError("output must be a nonempty path"))
     destination = normpath(joinpath(root, output))
     islink(destination) && throw(ArgumentError("output must not be a symlink"))

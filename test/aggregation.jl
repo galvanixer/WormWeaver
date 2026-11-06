@@ -20,6 +20,9 @@ sampler:
           weight: 1.0
 """
 
+default_aggregate_path(root) =
+    joinpath(root, "$(last(splitpath(abspath(root))))_aggregated.jld2")
+
 # Statistical fixtures also need the manifest paths and production log used by
 # the status precheck. Tests of specific statuses write their own logs instead.
 function write_aggregation_manifest(path; manifest)
@@ -256,7 +259,7 @@ end
 
         saved = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") save_aggregate(root; observables=["Energy"])
         @test isequal(saved, table)
-        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
         @test read.(sources) == original_bytes
     end
 end
@@ -270,7 +273,10 @@ end
         manifest_path = joinpath(root, "manifest.jld2")
         write_aggregation_manifest(manifest_path; manifest)
         write(joinpath(root, "manifest.csv"), "original manifest")
-        sources = [path, manifest_path, joinpath(root, "config.yaml"), joinpath(root, "manifest.csv")]
+        legacy_output = joinpath(root, "aggregated.jld2")
+        write(legacy_output, "legacy aggregate")
+        sources = [path, manifest_path, joinpath(root, "config.yaml"),
+                   joinpath(root, "manifest.csv"), legacy_output]
         original_bytes = read.(sources)
 
         before_files = readdir(root)
@@ -317,17 +323,24 @@ end
         @test expanded.nsamples == [4000]
         @test table.ParticlesHistogram[1]["zSectorSampleCount"] == 6
 
-        written = save_aggregate(root; min_blocks=2)
+        written = save_aggregate(root * "/"; min_blocks=2)
         @test isequal(written, table)
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
+        saved = JLD2.load(default_aggregate_path(root), "aggregate")
         @test isequal(saved, table)
         @test read.(sources) == original_bytes
-        @test_throws ArgumentError save_aggregate(root)
-        @test isequal(save_aggregate(root; min_blocks=2, overwrite=true), table)
+        cd(root) do
+            @test isequal(save_aggregate("."; min_blocks=2), table)
+        end
+        @test isequal(save_aggregate(root; min_blocks=2), table)
+        @test_throws ArgumentError save_aggregate(root; overwrite=false)
+        @test_throws ArgumentError save_aggregate("/")
         subset = aggregate(root; observables=("Windings", "Energy"))
         @test names(subset) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["Windings", "Energy"]]
         custom_output = joinpath(root, "nested", "custom.jld2")
         save_aggregate(root; observables=["Energy"], output=custom_output)
+        save_aggregate(root; observables=["Energy"], output=custom_output)
+        @test_throws ArgumentError save_aggregate(
+            root; observables=["Energy"], output=custom_output, overwrite=false)
         @test names(JLD2.load(custom_output, "aggregate")) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["Energy"]]
         for source in (path, joinpath(root, "config.yaml"))
             @test_throws ArgumentError save_aggregate(root; output=source, overwrite=true)
@@ -469,7 +482,7 @@ end
         @test isequal(single_species["meanParticleNumberBySpecies"][1], single_species["meanTotalParticleNumber"])
         @test isequal(single_species["meanSquaredParticleNumberBySpecies"][1], single_species["meanSquaredTotalParticleNumber"])
 
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"))
+        saved = JLD2.load(default_aggregate_path(root))
         @test isequal(saved["aggregate"], table)
         @test saved["error_method"] == "repeated blocking"
         @test saved["min_blocks"] == 10
@@ -595,7 +608,7 @@ end
         @test all(iszero, diagnostics["meanTotalParticleNumberStandardError"])
         @test all(iszero, diagnostics["meanSquaredTotalParticleNumberStandardError"])
         @test read(path) == before
-        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate").ParticlesHistogram[1], histogram)
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate").ParticlesHistogram[1], histogram)
         for (probability_field, error_field) in (
             ("particleNumberBySpeciesProbability", "particleNumberBySpeciesStandardError"),
             ("totalParticleNumberProbability", "totalParticleNumberStandardError"),
@@ -953,12 +966,13 @@ end
         @test summary["species"] == [1, 2]
         @test Measurements.value.(aggregate.Density[4]["densityBySpecies"]) == [1.0, 1.0]
 
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
+        saved = JLD2.load(default_aggregate_path(root), "aggregate")
         @test Measurements.value.(saved.Density[1]["densityBySpecies"]) == [1.0, 1.0]
         @test Measurements.uncertainty.(saved.Density[1]["densityBySpecies"]) ≈ [1.0, 0.0]
         @test read(path) == source_bytes
-        @test_throws ArgumentError WormWeaver.save_aggregate(root; observables=["Density"])
-        @test_logs (:warn, r"missing") WormWeaver.save_aggregate(root; observables=["Density"], overwrite=true)
+        @test_logs (:warn, r"missing") WormWeaver.save_aggregate(root; observables=["Density"])
+        @test_throws ArgumentError WormWeaver.save_aggregate(
+            root; observables=["Density"], overwrite=false)
         @test_logs (:warn, r"missing") WormWeaver.aggregate(root; observables=["Density"])
         @test_throws ArgumentError WormWeaver.save_aggregate(root; observables=["Density"], output="sim1/results.h5", overwrite=true)
 
@@ -1024,7 +1038,7 @@ end
                 @test Measurements.uncertainty.(summary[field]) ≈ expected
             end
         end
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
+        saved = JLD2.load(default_aggregate_path(root), "aggregate")
         @test isequal(saved, enabled)
         @test observable_table(enabled.Energy).blocking_diagnostics[1] === energy
         @test read.([path, manifest_path]) == before
@@ -1154,7 +1168,7 @@ end
             table = save_aggregate(root; observables=["Windings"], min_blocks=2,
                               blocking_diagnostics=true)
             @test isequal(table.Windings[1], enabled)
-            @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)
+            @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
             expanded = observable_table(table.Windings)
             for field in fields
                 @test expanded[1, field] === table.Windings[1][field]

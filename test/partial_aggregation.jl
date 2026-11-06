@@ -79,7 +79,7 @@
         @test table.Energy[7]["nblocks"] == 3
         @test Measurements.value(table.Energy[7]["totalEnergy"]) ≈ 1.5
         @test table.ParticlesHistogram[4]["zSectorSampleCount"] == 3
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
+        saved = JLD2.load(default_aggregate_path(root), "aggregate")
         metadata_columns = names(snapshot)
         @test isequal(saved[:, metadata_columns], table[:, metadata_columns])
         # Measurements with NaN uncertainties compare unequal, so check the

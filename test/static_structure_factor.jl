@@ -71,7 +71,7 @@
         @test diagnostics["structureFactorBySpeciesPairImaginaryStandardError"][1, 2, 1, :] ≈ 2 .* [base_error, 1.72]
         @test size(diagnostics["structureFactorByMomentumStandardError"]) == (3, 2)
         @test all(iszero, diagnostics["structureFactorByMomentumStandardError"])
-        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), diagnosed)
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), diagnosed)
         @test read(path) == original
         @test observable_table(table.StaticStructureFactor).momenta[1] == md.momenta
 

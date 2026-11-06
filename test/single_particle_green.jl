@@ -73,7 +73,7 @@ end
         @test haskey(diagnostics, "grEqualTimeStandardError")
         @test diagnostics["block_counts"] == [4, 2]
         @test diagnostics["sample_counts"] == [10, 10]
-        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
         @test observable_table(table.SingleParticleGreenFunction).gKTau[1] === result
         @test read(path) == source_bytes
         plain = aggregate(root; observables=["SingleParticleGreenFunction"], min_blocks=2).SingleParticleGreenFunction[1]
@@ -157,7 +157,7 @@ end
         @test isequal(diagnosed.SingleParticleGreenFunction[1]["grEqualTime"], summary["grEqualTime"])
         @test diagnosed.SingleParticleGreenFunction[1]["blocking_diagnostics"]["grEqualTimeStandardError"] ≈ reshape([32/9], 1, 1, 1)
         @test read.([path, joinpath(root, "manifest.jld2")]) == sources
-        @test isequal(JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate"), table)
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
         @test observable_table(table.SingleParticleGreenFunction).grEqualTime[1] === summary["grEqualTime"]
 
         # Additional numerator representations are optional and do not affect
@@ -257,9 +257,9 @@ end
             blocking_diagnostics=true, min_blocks=2)
         @test Measurements.value.(enabled.SingleParticleGreenFunction[1]["grEqualTime"]) == Measurements.value.(summary["grEqualTime"])
         @test haskey(enabled.SingleParticleGreenFunction[1], "blocking_diagnostics")
-        saved = JLD2.load(joinpath(root, "aggregated.jld2"), "aggregate")
+        saved = JLD2.load(default_aggregate_path(root), "aggregate")
         @test isequal(saved, table)
-        @test Set(keys(JLD2.load(joinpath(root, "aggregated.jld2")))) == Set(["aggregate"])
+        @test Set(keys(JLD2.load(default_aggregate_path(root)))) == Set(["aggregate"])
         expanded = observable_table(table.SingleParticleGreenFunction)
         @test expanded.gREqualTimeHits[1] === summary["gREqualTimeHits"]
         @test expanded.zSectorVisitCount == [10.0]
