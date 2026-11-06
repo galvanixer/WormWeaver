@@ -152,7 +152,8 @@ end
 
 """
     aggregate(study_dir; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
-        min_blocks=10, blocking_diagnostics=false) -> DataFrame
+        min_blocks=10, blocking_diagnostics=false, progress=false,
+        io=stdout) -> DataFrame
 
 Obtain the manifest with refreshed local-log progress from `status_manifest`,
 then read each simulation's HDF5 block histories. Preserve its rows and all columns,
@@ -278,12 +279,18 @@ Component uncertainties do not reconstruct covariance; aggregate saved totals an
 squares directly. Keep original block histograms for joint variance or
 compressibility uncertainties.
 
+Set `progress=true` to print the selected observables and the manifest position
+and name of each simulation immediately before its results are read. Skipped
+simulations are not printed. Output is written to `io`.
+
 Return the DataFrame without writing files. Use `save_aggregate` to aggregate and
 save the table as JLD2.
 """
 function aggregate(study_dir::AbstractString; observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
                    min_blocks::Integer=10,
-                   blocking_diagnostics::Bool=false)
+                   blocking_diagnostics::Bool=false,
+                   progress::Bool=false,
+                   io::IO=stdout)
     min_blocks >= 2 || throw(ArgumentError("min_blocks must be at least two"))
     observables isa Union{AbstractVector,Tuple,AbstractSet} ||
         throw(ArgumentError("observables must be a collection of names"))
@@ -292,6 +299,10 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     all(name -> name isa AbstractString && haskey(OBSERVABLE_DEFINITIONS, name), selected) ||
         throw(ArgumentError("supported observables are Density, Energy, Windings, ParticlesHistogram, SingleParticleGreenFunction, DensityCorrelation, StaticStructureFactor, and CounterflowGreenFunction"))
     allunique(selected) || throw(ArgumentError("observables must not contain duplicates"))
+    if progress
+        println(io, "Observables: ", join(selected, ", "))
+        flush(io)
+    end
     root = abspath(study_dir)
     manifest = status_manifest(root)
     all(name -> name in names(manifest), ("output_file", "run.blocks")) ||
@@ -306,6 +317,7 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
     for observable in selected
         table[!, observable] = Union{Missing,Dict{String,Any}}[missing for _ in 1:DataFrames.nrow(table)]
     end
+    nrows = DataFrames.nrow(manifest)
     for (i, row) in enumerate(eachrow(manifest))
         expected_blocks = row["run.blocks"]
         expected_blocks isa Integer && !(expected_blocks isa Bool) && expected_blocks > 0 ||
@@ -320,9 +332,15 @@ function aggregate(study_dir::AbstractString; observables=["Density", "Energy", 
             @warn "Results file is missing; leaving selected observable cells missing" path
             continue
         end
+        if progress
+            println(io, "[$i/$nrows] $(row.simulation)")
+            flush(io)
+        end
         HDF5.h5open(path, "r") do file
             for observable in selected
-                table[i, observable] = read_observable_summary(file, observable, expected_blocks; min_blocks, blocking_diagnostics)
+                table[i, observable] = read_observable_summary(
+                    file, observable, expected_blocks; min_blocks,
+                    blocking_diagnostics)
             end
         end
     end
@@ -332,7 +350,8 @@ end
 """
     save_aggregate(study_dir; output=nothing, overwrite=true,
         observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
-        min_blocks=10, blocking_diagnostics=false) -> DataFrame
+        min_blocks=10, blocking_diagnostics=false, progress=false,
+        io=stdout) -> DataFrame
 
 Call `aggregate` with the selected observables and calculation options, save its
 DataFrame under the `aggregate` key in a JLD2 file, and return that DataFrame.
@@ -347,13 +366,17 @@ name.
 For selections containing observables other than `SingleParticleGreenFunction`
 and `CounterflowGreenFunction`, also save
 `error_method="repeated blocking"` and `min_blocks` as top-level metadata.
+The `progress` and `io` keywords behave as in [`aggregate`](@ref). With progress
+enabled, print the saved aggregate path after the write succeeds.
 """
 function save_aggregate(study_dir::AbstractString;
                         output::Union{Nothing,AbstractString}=nothing,
                         overwrite::Bool=true,
                         observables=["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"],
                         min_blocks::Integer=10,
-                        blocking_diagnostics::Bool=false)
+                        blocking_diagnostics::Bool=false,
+                        progress::Bool=false,
+                        io::IO=stdout)
     root = abspath(study_dir)
     if output === nothing
         dirname(root) == root &&
@@ -368,7 +391,8 @@ function save_aggregate(study_dir::AbstractString;
         overwrite || throw(ArgumentError("Output already exists: $destination; use overwrite=true"))
     end
 
-    table = aggregate(root; observables, min_blocks, blocking_diagnostics)
+    table = aggregate(root; observables, min_blocks, blocking_diagnostics,
+                      progress, io)
     protected = [normpath(joinpath(root, file)) for file in table.output_file
                  if file isa AbstractString]
     for row in eachrow(table)
@@ -384,6 +408,10 @@ function save_aggregate(study_dir::AbstractString;
         JLD2.jldsave(destination; aggregate=table)
     else
         JLD2.jldsave(destination; aggregate=table, error_method="repeated blocking", min_blocks)
+    end
+    if progress
+        println(io, "Saved aggregate: $destination")
+        flush(io)
     end
     return table
 end

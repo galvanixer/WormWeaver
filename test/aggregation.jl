@@ -250,16 +250,24 @@ end
         sources = [manifest_path, csv_path, [joinpath(root, config) for config in configs[1:3]]...]
         original_bytes = read.(sources)
 
-        table = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") aggregate(root; observables=["Energy"])
+        progress_output = IOBuffer()
+        table = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") aggregate(
+            root; observables=["Energy"], progress=true, io=progress_output)
         @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes", "Energy"]]
         @test isequal(table.g2_entry_modes, [(:regular,), missing, (), missing])
         @test all(==(0), table.completed_blocks)
         @test all(ismissing, table.Energy)
+        expected_progress = "Observables: Energy\n"
+        @test String(take!(progress_output)) == expected_progress
         @test read.(sources) == original_bytes
 
-        saved = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") save_aggregate(root; observables=["Energy"])
+        save_output = IOBuffer()
+        saved = @test_logs (:warn, r"checksum does not match") (:warn, r"Cannot read configuration") save_aggregate(
+            root; observables=["Energy"], progress=true, io=save_output)
         @test isequal(saved, table)
         @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
+        @test String(take!(save_output)) == expected_progress *
+            "Saved aggregate: $(default_aggregate_path(root))\n"
         @test read.(sources) == original_bytes
     end
 end
@@ -283,6 +291,12 @@ end
         table = aggregate(root; min_blocks=2)
         @test readdir(root) == before_files
         @test isequal(aggregate(root; min_blocks=2), table)
+        progress_output = IOBuffer()
+        @test isequal(aggregate(
+            root; observables=["Energy"], min_blocks=2, progress=true,
+            io=progress_output).Energy, table.Energy)
+        @test String(take!(progress_output)) ==
+            "Observables: Energy\n[1/1] sim1\n"
         @test names(table) == [names(manifest); ["status", "completed_blocks", "failed", "log_source", "g2_entry_modes"]; ["Density", "Energy", "Windings", "ParticlesHistogram", "SingleParticleGreenFunction", "DensityCorrelation", "StaticStructureFactor", "CounterflowGreenFunction"]]
         @test table.g2_entry_modes == [()]
         @test ismissing(table.SingleParticleGreenFunction[1])
@@ -381,12 +395,16 @@ end
         missing_manifest = DataFrames.DataFrame(output_file=[missing, "missing.h5"])
         missing_manifest[!, "run.blocks"] = [4, 4]
         write_aggregation_manifest(manifest_path; manifest=missing_manifest)
-        absent_files = @test_logs (:warn, r"No results path") (:warn, r"Results file is missing") aggregate(root)
+        progress_output = IOBuffer()
+        absent_files = @test_logs (:warn, r"No results path") (:warn, r"Results file is missing") aggregate(
+            root; progress=true, io=progress_output)
         @test DataFrames.nrow(absent_files) == 2
         @test all(ismissing, absent_files.Density)
         @test all(ismissing, absent_files.Energy)
         @test all(ismissing, absent_files.Windings)
         @test all(ismissing, absent_files.ParticlesHistogram)
+        @test String(take!(progress_output)) ==
+            "Observables: Density, Energy, Windings, ParticlesHistogram, SingleParticleGreenFunction, DensityCorrelation, StaticStructureFactor, CounterflowGreenFunction\n"
         write_aggregation_manifest(manifest_path; manifest)
 
         write_combined_fixture(path; nspecies=1, legacy=true)

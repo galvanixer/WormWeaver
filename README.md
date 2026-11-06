@@ -962,6 +962,7 @@ DataFrame:
 ```julia
 table = aggregate(study_dir)  # In memory only.
 table = save_aggregate(study_dir)  # Aggregate and save.
+table = save_aggregate(study_dir; progress=true)  # Show simulation progress.
 table = save_aggregate(study_dir; overwrite=false)  # Reject an existing file.
 table = save_aggregate(study_dir; observables=["Density", "Energy"],
     min_blocks=10, blocking_diagnostics=true, output="analysis/summary.jld2")
@@ -975,6 +976,13 @@ Existing files are replaced by default; set `overwrite=false` to reject
 replacement. A default filename cannot be derived for a filesystem-root study
 path because it has no directory name. Source configs, logs, and results remain
 protected from replacement. The JLD2 table is stored under the `aggregate` key.
+
+Set `progress=true` on either `aggregate` or `save_aggregate` to print the
+selected observables before processing, followed by each manifest position and
+simulation name immediately before its results are read. Skipped simulations
+are not printed. `save_aggregate` also prints the destination after a successful
+write. Use `io` to redirect this output, for example `io=stderr` or an open log
+file. Progress output is disabled by default.
 
 Missing results, absent selected groups, and empty observable histories retain
 their manifest rows with missing cells and warnings. Nonempty partial histories
