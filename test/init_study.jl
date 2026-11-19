@@ -1,6 +1,6 @@
 @testset "Initialize study definition" begin
     mktempdir() do root
-        for template in ("study.yaml", "unistra-hpc.yaml")
+        for template in ("study.yaml", "unistra-hpc.yaml", "lrbhqm-unit-density.yaml")
             path = joinpath(root, template, "study.yaml")
             @test init_study(path; template) == path
             original = read(joinpath(@__DIR__, "..", "templates", "studies", template))
@@ -28,6 +28,7 @@
         end
         @test occursin("study.yaml", sprint(showerror, err))
         @test occursin("unistra-hpc.yaml", sprint(showerror, err))
+        @test occursin("lrbhqm-unit-density.yaml", sprint(showerror, err))
         @test_throws ArgumentError init_study("")
         @test_throws ArgumentError init_study(root; overwrite=true)
         link = joinpath(root, "link.yaml")

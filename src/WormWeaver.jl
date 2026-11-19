@@ -8,6 +8,7 @@ include("study_generation/study.jl")
 include("study_generation/init_study.jl")
 include("study_generation/init_config.jl")
 using .Study: generate_study
+include("study_generation/lrbhqm/LRBHQM.jl")
 
 include("monitoring/study_status.jl")
 include("monitoring/hpc.jl")

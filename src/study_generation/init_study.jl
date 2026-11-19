@@ -2,7 +2,8 @@
     init_study(path; template="study.yaml", overwrite=false) -> String
 
 Copy a commented study template to `path` for editing. `template` is a filename
-in `templates/studies/`, such as `"study.yaml"` or `"unistra-hpc.yaml"`.
+in `templates/studies/`, such as `"study.yaml"`, `"unistra-hpc.yaml"`, or
+`"lrbhqm-unit-density.yaml"`.
 Relative destinations resolve from the current directory;
 missing parent directories are created. Returns the absolute destination path.
 Existing files require `overwrite=true`; directories and symlinks are rejected.
@@ -27,6 +28,8 @@ function init_study(path::AbstractString; template::AbstractString="study.yaml",
         write(io, contents)
     end
     println("Created study definition: $destination (template: $template)")
-    println("Edit its paths and parameters, then run generate_study(", repr(destination), ").")
+    generator = template == "lrbhqm-unit-density.yaml" ?
+        "WormWeaver.LRBHQM.generate_study" : "generate_study"
+    println("Edit its paths and parameters, then run $generator(", repr(destination), ").")
     destination
 end

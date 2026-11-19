@@ -1,0 +1,38 @@
+# Edit output_dir, then call:
+# WormWeaver.LRBHQM.generate_study("lrbhqm-unit-density.yaml")
+# Generates 40 simulations: 4 physical hoppings x 10 replicas.
+project: LRBHQM
+output_dir: /path/to/lrbhqm_unit_density
+
+template: LRBHQM/config_LRBHQM_singleworm.yaml
+unit_density_data: alpha1p3_U12overU11_0p5.jld2
+
+# true (default) adds _YYYY-MM-DD; set false to keep the path unchanged.
+# append_date: false
+
+# Constants shared by every simulation. The selected curated dataset contains
+# a two-species chain with alpha=1.3, U11=U22=20, and U12=U21=10.
+overrides:
+  lattice.extent: [64]
+  system.beta: 8.0
+  model.hopping.alpha: [1.3, 1.3]
+  run.blocks: 100
+  run.samples_per_block: 10000
+  run.burnin_blocks: 10
+
+# Physical hopping amplitudes. The generator derives t/U11 and resolves mu.
+# With U11=20 these correspond to t/U11 = 0.0275, 0.03, 0.035, and 0.04.
+sweep:
+  model.hopping.J:
+    - [0.55, 0.55]
+    - [0.60, 0.60]
+    - [0.70, 0.70]
+    - [0.80, 0.80]
+
+replicas: 10
+randomize_seeds: [run.seed, worldlines.init_seed]
+seed_generation_seed: 12345  # Omit for fresh random seeds each generation.
+
+# The default lookup uses single-worm data with mode "none". For a template
+# with G2 entry and matching curated data, pass match_sampling_mode=true to
+# WormWeaver.LRBHQM.generate_study.

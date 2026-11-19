@@ -113,10 +113,16 @@ Returns the absolute output directory. Set `overwrite=true` to replace an existi
 directory and all its contents after generation succeeds. Files and symlinks are rejected.
 """
 function generate_study(path::AbstractString; overwrite::Bool=false, validate_config=nothing)
+    _generate_study(path; overwrite, validate_config)
+end
+
+"""Generate a study with an optional internal configuration-resolution step."""
+function _generate_study(path::AbstractString; overwrite::Bool=false, validate_config=nothing,
+                         resolve_config=nothing, extra_allowed=())
     source = abspath(path)
     study_text = read(source, String)
     study = mapping(YAML.load(study_text), "Study")
-    allowed = ("project", "template", "output_dir", "overrides", "sweep", "correlated_sweeps", "replicas", "randomize_seeds", "seed_generation_seed", "multiwormqmc_path", "jobs", "append_date")
+    allowed = ("project", "template", "output_dir", "overrides", "sweep", "correlated_sweeps", "replicas", "randomize_seeds", "seed_generation_seed", "multiwormqmc_path", "jobs", "append_date", extra_allowed...)
     for key in keys(study)
         key in allowed || throw(ArgumentError("Unknown study option: $key"))
     end
@@ -238,6 +244,7 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
 
     configs = Any[]
     replica_numbers = Int[]
+    config_metadata = Dict{String,Any}[]
     function expand(config, index)
         if index > length(sweep_axes)
             for replica in 1:replicas
@@ -245,9 +252,18 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
                 for field in seed_fields
                     set_field!(instance, field, fresh_seed())
                 end
-                validate_config === nothing || validate_config(deepcopy(instance))
-                push!(configs, instance)
+                resolved = resolve_config === nothing ?
+                    (config=instance, manifest=Dict{String,Any}()) : resolve_config(instance)
+                resolved isa NamedTuple && haskey(resolved, :config) &&
+                    haskey(resolved, :manifest) || throw(ArgumentError(
+                    "Configuration resolution must return config and manifest"))
+                resolved.config isa AbstractDict ||
+                    throw(ArgumentError("Resolved config must be a mapping"))
+                metadata = mapping(resolved.manifest, "Resolved manifest fields")
+                validate_config === nothing || validate_config(deepcopy(resolved.config))
+                push!(configs, resolved.config)
                 push!(replica_numbers, replica)
+                push!(config_metadata, deepcopy(metadata))
             end
             return
         end
@@ -277,6 +293,16 @@ function generate_study(path::AbstractString; overwrite::Bool=false, validate_co
     )
     for field in unique(vcat(CORE_FIELDS, fields))
         manifest[!, field] = [deepcopy(get_field(config, field)) for config in configs]
+    end
+    metadata_fields = isempty(config_metadata) ? String[] : sort!(collect(keys(first(config_metadata))))
+    for metadata in config_metadata
+        sort!(collect(keys(metadata))) == metadata_fields || throw(ArgumentError(
+            "Resolved manifest fields must be identical for every configuration"))
+    end
+    for field in metadata_fields
+        field in names(manifest) &&
+            throw(ArgumentError("Resolved manifest field conflicts with existing field: $field"))
+        manifest[!, field] = [deepcopy(metadata[field]) for metadata in config_metadata]
     end
     csv_manifest = DataFrames.DataFrame()
     for field in names(manifest)

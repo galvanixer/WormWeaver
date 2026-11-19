@@ -4,6 +4,7 @@ using WormWeaver
 include("g2_entry_modes.jl")
 
 include("study.jl")
+include("lrbhqm_study.jl")
 
 include("init_study.jl")
 include("init_config.jl")

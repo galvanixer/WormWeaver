@@ -10,6 +10,27 @@ A positive-weight opening from a one-worm sector reachable from Z into a two-wor
 **G2 entry mode**:
 The proposal type permitted for scheduled G2 entry: regular, colocated aligned, or colocated anti-aligned. A schedule may permit multiple modes; an unrestricted colocated opening permits both alignments.
 
+**Unit-density crossing**:
+A curated estimate of the normalized chemical potential μ/U₁₁ at which the total density is one for a specified model, lattice size, inverse temperature, hopping ratio, and sampling mode.
+
+**Included unit-density crossing**:
+A unit-density crossing approved for use as an interpolation or extrapolation anchor. An excluded crossing remains part of the curation record but is never an anchor.
+
+**Supporting unit-density crossing**:
+An included crossing that supplies a sampled estimate or one endpoint of an interpolated or extrapolated estimate.
+
+**Unit-density chemical-potential estimate**:
+A sampled, interpolated, or lower-side extrapolated value of μ/U₁₁ resolved from included unit-density crossings.
+
+**Unit-density lookup mode**:
+The sampling-mode label used to select curated unit-density crossings. It may deliberately remain `none` when a simulation enables G2 entry but mode matching is disabled.
+
+**Curated unit-density dataset**:
+A named collection of unit-density crossings for one model family, selected explicitly by an LRBHQM study definition.
+
+**LRBHQM lattice size**:
+The sole linear extent of an LRBHQM chain, denoted `L` and stored as `nsites` in curated unit-density data.
+
 **Simulation aggregate**:
 A summary of production measurements from one simulation run, retaining observable estimates and their within-run statistical uncertainties. Separate runs remain separate summaries until combined in a subsequent analysis.
 

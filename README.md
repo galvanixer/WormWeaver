@@ -130,6 +130,33 @@ Relative custom paths are resolved from the study file. Omit `template` to use t
 
 The LRBHQM group contains regular, aligned, anti-aligned, and single-worm variants. Select `LRBHQM/config_LRBHQM_regular.yaml` for regular `Open`/`Close` moves between `[1, 0]` or `[0, 1]` and `[1, 1]`, or the aligned and anti-aligned variants for their corresponding colocated moves. The single-worm variant never enters `[1, 1]`. Keep `pair_green` and `counterflow_green` disabled with the regular and single-worm variants; those estimators require colocated moves.
 
+For an LRBHQM study at unit density, name one bundled curated dataset and sweep
+the physical hopping normally:
+
+```yaml
+project: LRBHQM
+unit_density_data: alpha1p3_U12overU11_0p5.jld2
+template: LRBHQM/config_LRBHQM_singleworm.yaml
+output_dir: /path/to/my_study
+sweep:
+  model.hopping.J:
+    - [0.5, 0.5]
+    - [0.6, 0.6]
+```
+
+Generate it through the model-specific namespace:
+
+```julia
+WormWeaver.LRBHQM.generate_study("lrbhqm_study.yaml")
+```
+
+This derives `t/U₁₁` from each expanded configuration, resolves the curated
+`μ/U₁₁`, and writes equal physical chemical potentials `μ = U₁₁(μ/U₁₁)`.
+The default lookup uses data with sampling mode `none`. Pass
+`match_sampling_mode=true` to select data using the configuration's scheduled G2
+entry mode. Explicit `model.onsite.mu` overrides or sweeps are rejected. Ordinary
+`generate_study` does not interpret `unit_density_data`.
+
 This example generates six simulations:
 
 ```text
