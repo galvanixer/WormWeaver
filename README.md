@@ -156,6 +156,9 @@ The default lookup uses data with sampling mode `none`. Pass
 `match_sampling_mode=true` to select data using the configuration's scheduled G2
 entry mode. Explicit `model.onsite.mu` overrides or sweeps are rejected. Ordinary
 `generate_study` does not interpret `unit_density_data`.
+The bundled `lrbhqm-unit-density.yaml` study template includes Unistra
+scratch-mode job settings; edit its account-specific generation, execution, and
+multiwormqmc checkout paths before use.
 
 This example generates six simulations:
 

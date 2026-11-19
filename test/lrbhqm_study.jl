@@ -127,6 +127,7 @@ end
         definition["output_dir"] = "generated"
         definition["append_date"] = false
         definition["replicas"] = 1
+        delete!(definition, "multiwormqmc_path")
         YAML.write_file(source, definition)
 
         output = WormWeaver.LRBHQM.generate_study(source)
