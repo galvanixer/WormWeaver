@@ -79,6 +79,9 @@ The dimensionless expectation ⟨(Wₐ−Wᵦ)²⟩ for two distinct components 
 The sample-count-weighted mean of the sector-reweighted block estimates of the momentum–imaginary-time single-particle Green function. Z-visit division and physical normalization have not been applied.
 _Avoid_: Physically normalized Green function
 
+**Raw G(k,τ) Fourier sum**:
+The sum of unweighted spatial Fourier phases from qualifying one-worm visits, grouped by species, momentum, and imaginary-time bin. It retains the sampled sector weight.
+
 **Counterflow equal-time hit histogram**:
 Unweighted counts of colocated counterflow endpoints by signed displacement within a one-sided finite imaginary-time window, directed by the first species in an ordered pair. These counts retain sampling-sector and window dependence and are not a physically normalized counterflow correlator.
 

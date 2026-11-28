@@ -86,7 +86,8 @@ function read_observable_summary(file, observable, expected_blocks; min_blocks, 
     if observable == "ParticlesHistogram"
         return particle_histogram_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
     elseif observable == "SingleParticleGreenFunction"
-        return single_particle_green_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
+        return single_particle_green_summary(histories, counts, metadata, data.gktau_reduction;
+                                             min_blocks, blocking_diagnostics)
     elseif observable == "Windings"
         return windings_summary(histories, counts, metadata; min_blocks, blocking_diagnostics)
     elseif observable == "StaticStructureFactor"
@@ -231,12 +232,14 @@ normalized Measurements with repeated-blocking paired jackknife errors; nsites,
 normalization, error_method, error_status, and min_blocks describe the analysis.
 Optional diagnostics include grEqualTimeStandardError, retained Z/sample totals,
 and level statuses. The central value uses all raw counts, without bias correction.
-When gKTau exists, its sample-count-weighted mean is retained as a species ×
+Fourier block sums are added directly and stored as gKTauSum, a species ×
+momentum × time-bin ComplexF64 array without uncertainties. Legacy gKTau block
+means are sample-count-weighted and retained as a species ×
 momentum × time-bin array of Complex{Measurement{Float64}}, with independent
 real/imaginary repeated-blocking errors. gKTauAggregationMethod and gKTauErrorMethod
 describe this raw estimate. Optional diagnostics include gKTauRealStandardError
-and gKTauImaginaryStandardError. No Z division or physical normalization is applied
-to gKTau. Other time/frequency measurements are not summarized.
+and gKTauImaginaryStandardError. Neither Fourier aggregate includes Z division
+or physical normalization. Other time/frequency measurements are not summarized.
 Equal-time analysis requires one-sided sums and normalization metadata; zero total
 Z visits throw for equal-time analysis. No derived HDF5 datasets are read and no time/frequency physical
 normalization is performed.

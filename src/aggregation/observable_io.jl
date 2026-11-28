@@ -6,7 +6,7 @@
 
 import HDF5
 
-"""Read histories, sample counts, and metadata; return missing for an absent group."""
+"""Read histories, sample counts, metadata, and the G(k,τ) reduction when present."""
 function read_observable_data(file, observable, definition)
     group_path = "observables/$observable"
     if !haskey(file, group_path)
@@ -27,15 +27,20 @@ function read_observable_data(file, observable, definition)
     optional_fields = filter(field -> haskey(group, field), definition.optional_fields)
     fields = (definition.fields..., optional_fields...)
     histories = Dict{String,Any}()
+    gktau_reduction = nothing
     for field in fields
-        histories[field] = read_observable_history(file, group, observable, field, definition, length(counts))
+        history, reduction = read_observable_history(file, group, observable, field, definition, length(counts))
+        histories[field] = history
+        if observable == "SingleParticleGreenFunction" && field == "gKTau"
+            gktau_reduction = reduction
+        end
     end
     required_metadata = required_observable_metadata(observable, definition, histories)
     metadata = read_observable_metadata(file, observable, definition.metadata, required_metadata)
-    return (; histories, counts, metadata)
+    return (; histories, counts, metadata, gktau_reduction)
 end
 
-"""Read one field and check block shape, reduction, and finite numeric contents."""
+"""Read a history and its resolved reduction, checking block shape and values."""
 function read_observable_history(file, group, observable, field, definition, block_count)
     haskey(group, field) || throw(ArgumentError("Missing $observable/$field"))
     dataset = group[field]
@@ -43,24 +48,37 @@ function read_observable_history(file, group, observable, field, definition, blo
         throw(DimensionMismatch("$observable/$field and sampleCount have different block counts"))
     attributes = HDF5.attributes(dataset)
     reduction_path = "observables/METADATA/$observable/reduction_$field"
-    expected_reduction = get(get(definition, :field_reductions, (;)), Symbol(field), definition.reduction)
-    if expected_reduction == "sum" && !haskey(attributes, "reduction") && !haskey(file, reduction_path)
+    has_group_reduction = haskey(file, reduction_path)
+    has_attribute = haskey(attributes, "reduction")
+    group_reduction = has_group_reduction ? read(file[reduction_path]) : nothing
+    reduction = definition.reduction
+    is_gktau = observable == "SingleParticleGreenFunction" && field == "gKTau"
+    if is_gktau
+        # The writer uses group metadata to distinguish Fourier sums from legacy means.
+        reduction = has_group_reduction ? group_reduction : "mean"
+        reduction in ("mean", "sum") ||
+            throw(ArgumentError("$observable/$field requires mean or sum reduction"))
+    end
+    if reduction == "sum" && !has_attribute && !has_group_reduction
         throw(ArgumentError("$observable/$field requires explicit sum reduction metadata"))
     end
-    if haskey(attributes, "reduction")
-        read(attributes["reduction"]) == expected_reduction ||
-            throw(ArgumentError("$observable/$field requires $expected_reduction reduction"))
+    if has_attribute
+        read(attributes["reduction"]) == reduction ||
+            throw(ArgumentError("$observable/$field requires $reduction reduction"))
     end
-    if haskey(file, reduction_path)
-        read(file[reduction_path]) == expected_reduction ||
-            throw(ArgumentError("$observable/$field requires $expected_reduction reduction"))
+    if has_group_reduction
+        group_reduction == reduction ||
+            throw(ArgumentError("$observable/$field requires $reduction reduction"))
     end
 
     history = read(dataset)
     numeric_type = field in get(definition, :complex_fields, ()) ? Number : Real
     history isa AbstractArray{<:numeric_type} || throw(ArgumentError("$observable/$field must be a numeric history"))
     all(isfinite, history) || throw(ArgumentError("$observable/$field contains nonfinite values"))
-    if expected_reduction == "sum"
+    if is_gktau && reduction == "sum"
+        history isa AbstractArray{<:Complex} ||
+            throw(ArgumentError("$observable/$field Fourier sums must be complex"))
+    elseif reduction == "sum"
         if get(definition, :integer_sums, true)
             history isa AbstractArray{<:Integer} && !(eltype(history) <: Bool) && all(>=(0), history) ||
                 throw(ArgumentError("$observable/$field must contain nonnegative integer counts"))
@@ -69,7 +87,7 @@ function read_observable_history(file, group, observable, field, definition, blo
                 throw(ArgumentError("$observable/$field must contain nonnegative numeric counts"))
         end
     end
-    return history
+    return history, reduction
 end
 
 """Select required metadata explicitly for the observable and available histories."""

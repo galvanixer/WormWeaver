@@ -351,10 +351,11 @@ end
 """
     describe_single_particle_green(summary; io=stdout) -> nothing
 
-Describe one simulation's retained `gKTau`, `grEqualTime`, and `gREqualTimeHits`
+Describe one simulation's retained `gKTau` or `gKTauSum`, `grEqualTime`, and `gREqualTimeHits`
 in an aligned report containing an observable inventory, coordinate grids, first
 stored examples, production statistics, and estimator conventions. Complex
-`gKTau` errors are reported separately for real and imaginary parts.
+`gKTau` errors are reported separately for real and imaginary parts. Raw
+`gKTauSum` values have no attached uncertainties.
 
 Absent quantities say "Not present in this summary", since older aggregates may
 omit measured data. Missing metadata is "Unavailable". Accept `missing` for an
@@ -368,13 +369,15 @@ function describe_single_particle_green(summary::Union{Missing,AbstractDict}; io
         println(io, "No SingleParticleGreenFunction measurements available.")
         return nothing
     end
-    saved(key) = haskey(summary, key) && summary[key] !== nothing && !ismissing(summary[key]) ?
-        summary[key] : "Unavailable"
-    quantities = (("gKTau", 3, "species × k × τ", "Raw weighted mean"),
+    available(key) = haskey(summary, key) && summary[key] !== nothing && !ismissing(summary[key])
+    saved(key) = available(key) ? summary[key] : "Unavailable"
+    fourier_sum = available("gKTauSum")
+    fourier_key = fourier_sum ? "gKTauSum" : "gKTau"
+    fourier_meaning = fourier_sum ? "Raw Fourier sum" : "Raw weighted mean"
+    quantities = ((fourier_key, 3, "species × k × τ", fourier_meaning),
                   ("grEqualTime", 2, "species × r", "Normalized estimate"),
                   ("gREqualTimeHits", 2, "species × r", "Raw hits"))
-    present = [haskey(summary, key) && summary[key] !== nothing && !ismissing(summary[key])
-               for (key, _, _, _) in quantities]
+    present = [available(key) for (key, _, _, _) in quantities]
     rows = Vector{String}[]
     for (i, (key, rank, axes, meaning)) in enumerate(quantities)
         if present[i]
@@ -393,7 +396,7 @@ function describe_single_particle_green(summary::Union{Missing,AbstractDict}; io
         all(i -> !present[i] || size(summary[quantities[i][1]], 1) == length(species), 1:3) ||
             throw(DimensionMismatch("Species metadata does not match the measurement arrays"))
     end
-    nk = present[1] ? size(summary["gKTau"], 2) : nothing
+    nk = present[1] ? size(summary[fourier_key], 2) : nothing
     nr = present[2] ? size(summary["grEqualTime"], 2) : present[3] ? size(summary["gREqualTimeHits"], 2) : nothing
     if present[2] && present[3]
         size(summary["grEqualTime"]) == size(summary["gREqualTimeHits"]) ||
@@ -404,8 +407,8 @@ function describe_single_particle_green(summary::Union{Missing,AbstractDict}; io
     if edges !== nothing
         edges isa AbstractVector{<:Real} && length(edges) >= 2 && all(isfinite, edges) &&
             all(>(0), diff(edges)) || throw(ArgumentError("tau_edges must be finite and strictly increasing"))
-        !present[1] || length(edges) == size(summary["gKTau"], 3) + 1 ||
-            throw(DimensionMismatch("tau_edges does not match gKTau time bins"))
+        !present[1] || length(edges) == size(summary[fourier_key], 3) + 1 ||
+            throw(DimensionMismatch("tau_edges does not match $fourier_key time bins"))
     end
 
     momenta = green_coordinate_grid(summary, "momenta", nk)
@@ -461,18 +464,22 @@ function describe_single_particle_green(summary::Union{Missing,AbstractDict}; io
         end
         indices = join(Tuple(first(CartesianIndices(data))), ",")
         species_label = species === nothing ? "Unavailable" : string(first(species))
-        if key == "gKTau"
+        if key == fourier_key
             momentum = momenta === nothing || isempty(momenta) ? "Unavailable" :
                 format_green_coordinate_row(momenta, 1)
             tau = edges === nothing ? "Unavailable" :
                 "[" * join(format_green_coordinate.(edges[1:2]), ", ") * "]"
             push!(example_lines, "$key[$indices]    species=$species_label  k=$momentum  τ=$tau")
             value = first(data)
-            value isa Complex || throw(ArgumentError("gKTau estimates must be complex Measurements"))
-            append!(example_lines, indent_green_example_rows([
-                green_estimate_row("Real", real(value)),
-                green_estimate_row("Imaginary", imag(value)),
-            ]))
+            value isa Complex || throw(ArgumentError("$key must contain complex values"))
+            component_rows = if fourier_sum
+                [["Real", string(real(value)), "", ""],
+                 ["Imaginary", string(imag(value)), "", ""]]
+            else
+                [green_estimate_row("Real", real(value)),
+                 green_estimate_row("Imaginary", imag(value))]
+            end
+            append!(example_lines, indent_green_example_rows(component_rows))
         else
             displacement = displacements === nothing || isempty(displacements) ? "Unavailable" :
                 format_green_coordinate_row(displacements, 1)
@@ -503,7 +510,11 @@ function describe_single_particle_green(summary::Union{Missing,AbstractDict}; io
     ]; right_columns=(2,))[2:end]
 
     convention_lines = String[]
-    if present[1]
+    if fourier_sum
+        append!(convention_lines, ["gKTauSum",
+            "  Aggregation    Sum of saved Fourier blocks",
+            "  Uncertainty    None (raw Fourier sum)", ""])
+    elseif present[1]
         append!(convention_lines, ["gKTau",
             "  Aggregation    " * observable_method(saved("gKTauAggregationMethod"),
                 "sample-count-weighted mean", "sampleCount-weighted block means"),

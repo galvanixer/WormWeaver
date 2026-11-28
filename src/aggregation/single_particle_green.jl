@@ -1,4 +1,3 @@
-# Raw momentum/time means and equal-time normalization use shared statistics.
 const SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA = (
     "species", "displacements", "displacement_vectors", "displacement_counts",
     "beta", "equal_time_window", "equal_time_convention", "production_log_eta",
@@ -6,7 +5,7 @@ const SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA = (
 const SINGLE_PARTICLE_GREEN_DEFINITION = (
     fields=("zSectorVisitCount",), optional_fields=("gREqualTimeHits", "gKTau"),
     reduction="sum", integer_sums=false,
-    field_reductions=(gKTau="mean",), complex_fields=("gKTau",),
+    complex_fields=("gKTau",),
     metadata=(SINGLE_PARTICLE_GREEN_EQUAL_TIME_METADATA...,
               "momentum_indices", "momenta", "tau_edges", "frequency_indices", "frequencies",
               "endpoint_convention", "normalization", "equal_time_normalization"),
@@ -128,20 +127,25 @@ function equal_time_normalization(metadata)
 end
 
 """
-    single_particle_green_summary(histories, counts, metadata;
+    single_particle_green_summary(histories, counts, metadata, gktau_reduction;
         min_blocks=10, blocking_diagnostics=false)
 
 Summarize validated histories as a dictionary retaining raw sums and metadata.
-When gKTau exists, sample-count-weight its block means and attach separate real
-and imaginary blocking errors, without Z division or physical normalization.
+Store Fourier block sums as `gKTauSum` without weighting or uncertainties.
+For legacy block means, store the sample-count-weighted `gKTau` with separate
+real and imaginary blocking errors. Both are retained without Z division.
 When equal-time hits exist, add normalized `grEqualTime` Measurements with paired
 jackknife errors across blocking levels, plus optional diagnostic curves.
 """
-function single_particle_green_summary(histories, counts, metadata;
+function single_particle_green_summary(histories, counts, metadata, gktau_reduction;
                                        min_blocks=10, blocking_diagnostics::Bool=false)
     summary = summarize_raw_green_counts(histories, counts, metadata)
-    if haskey(histories, "gKTau")
-        # Analyze components independently with the existing block-mean estimator.
+    if gktau_reduction == "sum"
+        totals = dropdims(sum(ComplexF64, histories["gKTau"]; dims=4); dims=4)
+        all(isfinite, totals) ||
+            throw(ArgumentError("SingleParticleGreenFunction/gKTau sums overflowed"))
+        summary["gKTauSum"] = totals
+    elseif gktau_reduction == "mean"
         history = histories["gKTau"]
         components = mean_observable_summary(
             Dict("gKTauReal" => real.(history), "gKTauImaginary" => imag.(history)),

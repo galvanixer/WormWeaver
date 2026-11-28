@@ -72,6 +72,17 @@ import Measurements
     @test !occursin("paired jackknife", report)
     @test !occursin("EQUAL_TIME_ONLY_FORMULA", report)
 
+    sum_only = copy(raw_only)
+    delete!(sum_only, "gKTau")
+    sum_only["gKTauSum"] = fill(-3.0 + 2.0im, 2, 2, 2)
+    report = sprint(io -> describe_single_particle_green(sum_only; io))
+    @test occursin(r"gKTauSum\s+2×2×2\s+species × k × τ\s+Raw Fourier sum", report)
+    @test occursin("gKTauSum[1,1,1]    species=7  k=[1.0000, 2.0000]  τ=[0.2500, 0.7500]", report)
+    @test occursin(r"Real\s+-3\.0", report)
+    @test occursin(r"Imaginary\s+2\.0", report)
+    @test occursin("None (raw Fourier sum)", report)
+    @test !occursin("±", report)
+
     # Older aggregates can retain coordinate grids without any of these quantities.
     legacy = deepcopy(raw_only)
     delete!(legacy, "gKTau")

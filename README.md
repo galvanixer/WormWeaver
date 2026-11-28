@@ -678,7 +678,10 @@ raw counterflow counts are summed without uncertainty estimates.
   hits exist, `grEqualTime` contains normalized species × displacement `Measurement`
   values with repeated-blocking paired jackknife errors. Analysis is computed
   from original histories, without reading `/derived/SingleParticleGreenFunction`.
-  When `gKTau` is saved, its block means are combined with `sampleCount` weights
+  MultiWormQMC 0.3 Fourier block sums are added directly into `gKTauSum`, a
+  species × momentum × τ-bin `ComplexF64` array. It carries no uncertainties
+  and uses no sample-count weighting, sector reweighting, or Z division.
+  Legacy `gKTau` block means are combined with `sampleCount` weights
   into a species × momentum × τ-bin array of complex Measurements, with separate
   real and imaginary repeated-blocking errors. These are raw sector-reweighted
   estimates: no Z-visit division or physical normalization is applied. Sample/Z
@@ -689,7 +692,7 @@ raw counterflow counts are summed without uncertainty estimates.
 Use `describe_single_particle_green(table.SingleParticleGreenFunction[1])` to
 inspect one saved summary. Its aligned sections show the observable inventory,
 first/last coordinate-grid entries, first stored measurement examples,
-production counts, and the saved estimator conventions. Complex examples show
+production counts, and the saved estimator conventions. Legacy Fourier examples show
 separate real/imaginary uncertainties; counts use digit grouping and coordinates
 use a consistent precision. Long conventions wrap instead of being truncated.
 Absent quantities say "Not present in this summary": metadata alone cannot tell
@@ -710,13 +713,20 @@ green.grEqualTime[1]         # Normalized finite-window correlation ± error, if
 Measurements.value.(green.grEqualTime[1])
 Measurements.uncertainty.(green.grEqualTime[1])
 
-# When momentum/time measurements are present:
+# For MultiWormQMC 0.3 runs with momentum/time measurements:
+green.gKTauSum[1]     # Raw Fourier sums; species × momentum × τ bin.
+
+# For legacy runs with momentum/time measurements:
 gktau = green.gKTau[1]  # Raw weighted mean; species × momentum × τ bin.
 Measurements.value.(real.(gktau))
 Measurements.uncertainty.(imag.(gktau))
 ```
 
-For raw `gKTau`, the estimate is `sum(sampleCount_b * gKTau_b) / sum(sampleCount_b)`.
+The HDF5 group metadata `reduction_gKTau` selects the estimator. The dataset's
+`reduction` attribute must agree when present. Files without group metadata
+use the legacy mean when the attribute is absent or declares `mean`.
+
+For legacy `gKTau`, the estimate is `sum(sampleCount_b * gKTau_b) / sum(sampleCount_b)`.
 All saved blocks contribute to its mean. Each component's error uses the existing
 block-mean repeated-blocking estimator. `gKTauAggregationMethod` and
 `gKTauErrorMethod` describe this calculation separately from equal-time analysis.
@@ -724,7 +734,7 @@ With `blocking_diagnostics=true`, `gKTauRealStandardError` and
 `gKTauImaginaryStandardError` retain species × momentum × τ-bin × blocking-level
 curves alongside the equal-time diagnostics, when present. Component errors do
 not retain covariance; original HDF5 block histories remain available for future
-physical ratio estimates and paired uncertainties. A `gKTau`-only history can be
+physical ratio estimates and paired uncertainties. A Fourier-only history can be
 aggregated with zero total Z visits.
 
 For equal-time sampling, normalization is
@@ -762,10 +772,10 @@ Complex outputs are combined `Complex{Measurement{Float64}}` values with separat
 real and imaginary uncertainties. Joint derived quantities should be computed
 inside `transform`; individual output errors do not retain covariance.
 
-The helper accepts sector-reweighted block means such as native complex `gKTau`,
-using `reduction=:mean` and sample counts. Its default `identity` produces the
-numerator/Z ratio alone. `aggregate` stores the raw weighted `gKTau` mean described
-above instead; physical time/frequency normalization is not implemented.
+The helper accepts sector-reweighted legacy `gKTau` block means with
+`reduction=:mean` and sample counts, or Fourier block sums with `reduction=:sum`.
+Its default `identity` produces the numerator/Z ratio alone. `aggregate` retains
+the raw Fourier summaries described above.
 
 The aggregation code follows three steps: `aggregate.jl` coordinates runs and
 selects summaries; `observable_io.jl` reads saved histories and metadata; each

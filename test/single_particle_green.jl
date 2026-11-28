@@ -1,7 +1,7 @@
 function write_single_particle_green_fixture(path; nspecies=2, counts=[11, 23, 5, 41],
         hits=reshape(collect(1.0:(nspecies * 3 * length(counts))), nspecies, 3, length(counts)),
         zcounts=Float64.(1:length(counts)), species=collect(1:nspecies),
-        metadata=(;), reduction="sum", append=false, gktau=nothing)
+        metadata=(;), reduction="sum", append=false, gktau=nothing, gktau_reduction="mean")
     md = merge((;
         species, displacements=reshape([0, 1, -1], 3, 1),
         displacement_vectors=reshape([0.0, 1, -1], 3, 1),
@@ -18,13 +18,18 @@ function write_single_particle_green_fixture(path; nspecies=2, counts=[11, 23, 5
             HDF5.create_group(file, "observables")
             HDF5.create_group(file, "observables/METADATA")
         end
-        write_observable_fixture(file, "SingleParticleGreenFunction",
-            (; gREqualTimeHits=hits, zSectorVisitCount=zcounts), counts; metadata=md, reduction)
+        fields = (; zSectorVisitCount=zcounts)
+        if hits !== nothing
+            fields = merge(fields, (; gREqualTimeHits=hits))
+        end
+        write_observable_fixture(file, "SingleParticleGreenFunction", fields, counts; metadata=md, reduction)
         if gktau !== nothing
             group = file["observables/SingleParticleGreenFunction"]
             group["gKTau"] = gktau
-            HDF5.attributes(group["gKTau"])["reduction"] = "mean"
-            file["observables/METADATA/SingleParticleGreenFunction/reduction_gKTau"] = "mean"
+            if gktau_reduction !== nothing
+                HDF5.attributes(group["gKTau"])["reduction"] = gktau_reduction
+                file["observables/METADATA/SingleParticleGreenFunction/reduction_gKTau"] = gktau_reduction
+            end
         end
         # Deliberately unusable derived data must not be consulted by raw aggregation.
         derived = HDF5.create_group(file, "derived")
@@ -134,6 +139,50 @@ end
             HDF5.attrs(file["observables/SingleParticleGreenFunction/gKTau"])["reduction"] = "sum"
         end
         @test_throws ArgumentError aggregate(root; observables=["SingleParticleGreenFunction"])
+    end
+end
+
+@testset "Raw G(k,tau) Fourier sums" begin
+    mktempdir() do root
+        path = joinpath(root, "results.h5")
+        manifest = DataFrames.DataFrame(output_file=["results.h5"])
+        manifest[!, "run.blocks"] = [3]
+        write_aggregation_manifest(joinpath(root, "manifest.jld2"); manifest)
+        dataset_path = "observables/SingleParticleGreenFunction/gKTau"
+        reduction_path = "observables/METADATA/SingleParticleGreenFunction/reduction_gKTau"
+        history = reshape(ComplexF64[1+2im, -3-4im, -2+im], 1, 1, 1, 3)
+        kwargs = (; nspecies=1, counts=[7, 11, 9], hits=nothing, zcounts=zeros(3), gktau=history)
+        observables = ["SingleParticleGreenFunction"]
+
+        write_single_particle_green_fixture(path; kwargs..., gktau_reduction="sum")
+        table = save_aggregate(root; observables, blocking_diagnostics=true)
+        summary = only(table.SingleParticleGreenFunction)
+        @test summary["gKTauSum"] isa Array{ComplexF64,3}
+        @test summary["gKTauSum"] == fill(-4.0 - 1.0im, 1, 1, 1)
+        @test summary["sampleCount"] == 27
+        @test summary["zSectorVisitCount"] == 0
+        @test !haskey(summary, "gKTau")
+        @test !haskey(summary, "blocking_diagnostics")
+        @test only(observable_table(table.SingleParticleGreenFunction).gKTauSum) === summary["gKTauSum"]
+        @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), table)
+
+        HDF5.h5open(path, "r+") do file
+            HDF5.delete_attribute(file[dataset_path], "reduction")
+        end
+        metadata_only = only(aggregate(root; observables).SingleParticleGreenFunction)
+        @test metadata_only["gKTauSum"] == summary["gKTauSum"]
+
+        write_single_particle_green_fixture(path; kwargs..., gktau_reduction="sum")
+        HDF5.h5open(path, "r+") do file
+            HDF5.delete_object(file, reduction_path)
+        end
+        @test_throws ArgumentError aggregate(root; observables)
+
+        write_single_particle_green_fixture(path; kwargs..., gktau_reduction=nothing)
+        unmarked = only(aggregate(root; observables).SingleParticleGreenFunction)
+        value = only(unmarked["gKTau"])
+        @test complex(Measurements.value(real(value)), Measurements.value(imag(value))) ≈
+            sum(vec(history) .* kwargs.counts) / sum(kwargs.counts)
     end
 end
 
