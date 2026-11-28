@@ -12,7 +12,8 @@
             beta=10.0, equal_time_window=0.05, equal_time_convention="one-sided inclusive window",
             endpoint_convention="first species sets direction", production_log_eta=-2.0)
         function write_fixture(; n=4, hit_history=hits[:, 1:n], z=zcounts[1:n], samples=counts[1:n],
-                               md=metadata, reduction="sum", extras=false)
+                               md=metadata, reduction="sum", extras=false, fourier_history=nothing,
+                               group_reduction="sum", attribute_reduction=group_reduction)
             HDF5.h5open(path, "w") do file
                 HDF5.create_group(file, "observables")
                 HDF5.create_group(file, "observables/METADATA")
@@ -23,6 +24,16 @@
                 if extras
                     for field in ("gRTau", "gKTau", "gKOmega", "gROmega")
                         file["observables/CounterflowGreenFunction/$field"] = zeros(3, 2, n)
+                    end
+                end
+                if fourier_history !== nothing
+                    dataset_path = "observables/CounterflowGreenFunction/gKTau"
+                    file[dataset_path] = fourier_history
+                    if group_reduction !== nothing
+                        file["observables/METADATA/CounterflowGreenFunction/reduction_gKTau"] = group_reduction
+                    end
+                    if attribute_reduction !== nothing
+                        HDF5.attributes(file[dataset_path])["reduction"] = attribute_reduction
                     end
                 end
                 derived = HDF5.create_group(file, "derived")
@@ -78,6 +89,59 @@
         omitted = @test_logs (:warn, r"representations omitted") (:warn, r"representations omitted") aggregate(root; observables=["CounterflowGreenFunction"])
         @test omitted.CounterflowGreenFunction[1]["gREqualTimeHits"] == [31, 0, 14]
         @test !haskey(omitted.CounterflowGreenFunction[1], "gRTau")
+        @test !haskey(omitted.CounterflowGreenFunction[1], "gKTauSum")
+
+        @testset "Counterflow Fourier sums" begin
+            observables = ["CounterflowGreenFunction"]
+            expected = ComplexF64[1+2im 5-6im; -3+4im -7-8im]
+            fourier_history = expected .* reshape([1, 2, -4, 2], 1, 1, 4)
+            grid = (momenta=reshape([0.0, 0.5], :, 1),
+                    momentum_indices=reshape([0, 1], :, 1), tau_edges=[0.0, 4.0, 10.0])
+            write_fixture(; fourier_history, md=merge(metadata, grid))
+            result = save_aggregate(root; observables, overwrite=true, blocking_diagnostics=true)
+            fourier = result.CounterflowGreenFunction[1]
+            @test fourier["gKTauSum"] isa Matrix{ComplexF64}
+            @test fourier["gKTauSum"] == expected
+            @test fourier["gREqualTimeHits"] == [31, 0, 14]
+            @test !haskey(fourier, "gKTau") && !haskey(fourier, "blocking_diagnostics")
+            @test observable_table(result.CounterflowGreenFunction).gKTauSum[1] === fourier["gKTauSum"]
+            @test isequal(JLD2.load(default_aggregate_path(root), "aggregate"), result)
+
+            md = merge((species_pair=[2, 1], channel="counterflow"), grid)
+            write_fixture(; fourier_history, md, hit_history=nothing, attribute_reduction=nothing)
+            fourier_only = aggregate(root; observables).CounterflowGreenFunction[1]
+            @test fourier_only["gKTauSum"] == expected
+            @test all(fourier_only[string(key)] == value for (key, value) in pairs(md))
+            @test !haskey(fourier_only, "gREqualTimeHits")
+
+            write_fixture(; fourier_history, group_reduction="mean")
+            legacy = @test_logs (:warn, r"representations omitted") (:warn, r"representations omitted") aggregate(root; observables)
+            @test legacy.CounterflowGreenFunction[1]["gREqualTimeHits"] == [31, 0, 14]
+            @test !haskey(legacy.CounterflowGreenFunction[1], "gKTauSum")
+
+            for markers in ((; group_reduction="mean", attribute_reduction="sum"),
+                            (; group_reduction=nothing, attribute_reduction="sum"),
+                            (; group_reduction="invalid"))
+                write_fixture(; fourier_history, md, hit_history=nothing, markers...)
+                @test_throws ArgumentError aggregate(root; observables)
+            end
+            for (history, error_type) in ((fourier_history[:, :, 1:3], DimensionMismatch),
+                                         (reshape(fourier_history, 4, 4), DimensionMismatch),
+                                         (real.(fourier_history), ArgumentError),
+                                         (fill(ComplexF64(Inf), 2, 2, 4), ArgumentError))
+                write_fixture(; fourier_history=history, md, hit_history=nothing)
+                @test_throws error_type aggregate(root; observables)
+            end
+            for (metadata_override, error_type) in (([0.0, 10.0], DimensionMismatch),
+                                                    ([0.0, 4.0, 4.0], ArgumentError))
+                write_fixture(; fourier_history, hit_history=nothing,
+                              md=merge(md, (; tau_edges=metadata_override)))
+                @test_throws error_type aggregate(root; observables)
+            end
+            write_fixture(; fourier_history, hit_history=nothing,
+                          md=Base.structdiff(md, (; momenta=md.momenta)))
+            @test_throws ArgumentError aggregate(root; observables)
+        end
 
         invalid_cases = (
             (ArgumentError, (; z=[2.0, 0, 2, 2])),

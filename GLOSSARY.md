@@ -85,6 +85,9 @@ The sum of unweighted spatial Fourier phases from qualifying one-worm visits, gr
 **Counterflow equal-time hit histogram**:
 Unweighted counts of colocated counterflow endpoints by signed displacement within a one-sided finite imaginary-time window, directed by the first species in an ordered pair. These counts retain sampling-sector and window dependence and are not a physically normalized counterflow correlator.
 
+**Raw counterflow Fourier sum**:
+The sum of unweighted spatial Fourier phases from qualifying counterflow visits for an ordered species pair, grouped by momentum and imaginary-time bin. It retains the sampled sector weight.
+
 **Single-particle Green-function report**:
 A readable inventory of one simulation's retained single-particle Green-function measurements, explaining their shapes, axes, coordinates, and raw or normalized interpretation. It includes the saved block/sample counts, Z-visit totals, and uncertainty methods for the retained estimates.
 

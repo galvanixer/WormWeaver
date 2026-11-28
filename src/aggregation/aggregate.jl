@@ -213,11 +213,14 @@ using `structureFactorBySpeciesPairRealStandardError`,
 `structureFactorByMomentumStandardError`.
 
 CounterflowGreenFunction retains raw `gREqualTimeHits` summed over saved blocks
-as a displacement vector, plus scalar sums of `zSectorVisitCount` and
+as a displacement vector and raw `gKTauSum` as a momentum × time-bin complex
+matrix. It also retains scalar sums of `zSectorVisitCount` and
 `sampleCount`, `nsamples`, `nblocks`, and `aggregation_method="sum"`. Hits are
 optional; absent hits do not imply a zero histogram. Require positive Z visits
 in each saved block, preserve the ordered `species_pair` and signed displacement
 metadata, and validate the one-sided finite-time window when hits exist.
+`gKTauSum` requires explicit group reduction metadata of `sum` and matching
+Fourier grids. Legacy Fourier means are omitted with a warning.
 `production_log_eta` is optional metadata and is not applied. No physical
 normalization, uncertainty estimates, or blocking curves are computed, even with
 `blocking_diagnostics=true`. Warn when other time/frequency representations are

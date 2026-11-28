@@ -31,17 +31,9 @@ function validate_single_particle_green(histories, counts, metadata)
         history = histories["gKTau"]
         ndims(history) == 4 && all(>(0), size(history)[1:3]) || throw(DimensionMismatch(
             "SingleParticleGreenFunction/gKTau must have species × momentum × time-bin × block dimensions"))
-        momenta, edges = metadata["momenta"], metadata["tau_edges"]
-        momenta isa AbstractMatrix{<:Real} && size(momenta, 2) > 0 && all(isfinite, momenta) ||
-            throw(ArgumentError("SingleParticleGreenFunction/momenta must be a finite numeric matrix"))
-        edges isa AbstractVector{<:Real} && all(isfinite, edges) && all(>(0), diff(edges)) ||
-            throw(ArgumentError("SingleParticleGreenFunction/tau_edges must be finite and strictly increasing"))
-        size(history)[1:3] == (length(species), size(momenta, 1), length(edges) - 1) ||
+        size(history, 1) == length(species) ||
             throw(DimensionMismatch("SingleParticleGreenFunction/gKTau axes do not match metadata"))
-        if haskey(metadata, "momentum_indices")
-            size(metadata["momentum_indices"]) == size(momenta) || throw(DimensionMismatch(
-                "SingleParticleGreenFunction/momentum_indices and momenta must have matching shapes"))
-        end
+        validate_fourier_grid(metadata, size(history)[2:3], "SingleParticleGreenFunction")
     end
     haskey(histories, "gREqualTimeHits") || return nothing
     hits = histories["gREqualTimeHits"]

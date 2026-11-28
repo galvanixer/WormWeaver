@@ -3,15 +3,15 @@ const COUNTERFLOW_EQUAL_TIME_METADATA = (
     "beta", "equal_time_window", "equal_time_convention",
 )
 const COUNTERFLOW_GREEN_DEFINITION = (
-    fields=("zSectorVisitCount",), optional_fields=("gREqualTimeHits",),
-    reduction="sum", integer_sums=false,
+    fields=("zSectorVisitCount",), optional_fields=("gREqualTimeHits", "gKTau"),
+    reduction="sum", integer_sums=false, complex_fields=("gKTau",),
     metadata=("species_pair", "channel", COUNTERFLOW_EQUAL_TIME_METADATA...,
               "production_log_eta", "endpoint_convention", "normalization",
               "equal_time_normalization", "momentum_indices", "momenta", "tau_edges",
               "frequency_indices", "frequencies"),
 )
 
-"""Validate raw counterflow counts, ordered species identity, and measured window axes."""
+"""Validate counterflow counts, ordered species identity, and available measurement axes."""
 function validate_counterflow_green(histories, counts, metadata)
     metadata["channel"] == "counterflow" || throw(ArgumentError(
         "CounterflowGreenFunction/channel must be counterflow"))
@@ -28,6 +28,12 @@ function validate_counterflow_green(histories, counts, metadata)
         weight = metadata["production_log_eta"]
         weight isa Real && !(weight isa Bool) && isfinite(weight) || throw(ArgumentError(
             "CounterflowGreenFunction/production_log_eta must be a finite scalar"))
+    end
+    if haskey(histories, "gKTau")
+        history = histories["gKTau"]
+        ndims(history) == 3 && all(>(0), size(history)[1:2]) || throw(DimensionMismatch(
+            "CounterflowGreenFunction/gKTau must have momentum × time-bin × block dimensions"))
+        validate_fourier_grid(metadata, size(history)[1:2], "CounterflowGreenFunction")
     end
     haskey(histories, "gREqualTimeHits") || return nothing
     hits = histories["gREqualTimeHits"]
@@ -61,20 +67,23 @@ end
 """
     counterflow_green_summary(histories, counts, metadata)
 
-Sum validated raw equal-time hits and Z visits across saved blocks, retaining
-sample/block counts and metadata. Preserve ordered species and signed grids.
-No sample-count weighting, physical normalization, errors, or blocking curves
-are applied to these diagnostic counts.
+Sum raw equal-time hits, Fourier blocks, and Z visits across saved blocks.
+Retain `gKTauSum` as a momentum × time-bin matrix and preserve the ordered
+species pair, grids, and sample/block counts. Sums carry no sample weighting,
+normalization, or statistical uncertainties.
 """
 function counterflow_green_summary(histories, counts, metadata)
     summary = Dict{String,Any}("nblocks" => length(counts),
         "sampleCount" => checked_count_sum(counts), "aggregation_method" => "sum")
     summary["nsamples"] = summary["sampleCount"]
     for (field, history) in histories
+        is_fourier_sum = field == "gKTau"
+        number_type = is_fourier_sum ? ComplexF64 : Float64
         values = eltype(history) <: Integer ? observable_counts(history) :
-            dropdims(sum(Float64, history; dims=ndims(history)); dims=ndims(history))
+            dropdims(sum(number_type, history; dims=ndims(history)); dims=ndims(history))
         all(isfinite, values) || throw(ArgumentError("CounterflowGreenFunction/$field sums overflowed"))
-        summary[field] = ndims(values) == 0 ? only(values) : values
+        key = is_fourier_sum ? "gKTauSum" : field
+        summary[key] = ndims(values) == 0 ? only(values) : values
     end
     merge!(summary, metadata)
     return summary

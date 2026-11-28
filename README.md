@@ -623,6 +623,7 @@ raw counterflow counts are summed without uncertainty estimates.
   table = aggregate(study_dir; observables=["CounterflowGreenFunction"])
   counterflow = table.CounterflowGreenFunction[1]
   counterflow["gREqualTimeHits"]  # Raw summed counts, when measured.
+  counterflow["gKTauSum"]        # Raw complex momentum × τ-bin sums, when measured.
   counterflow["species_pair"]
   counterflow["displacements"]
   ```
@@ -631,8 +632,11 @@ raw counterflow counts are summed without uncertainty estimates.
   and available metadata; an all-zero measured histogram remains a zero vector.
   Completed blocks from unfinished runs and single-block histories are eligible.
   Missing groups and empty histories produce `missing` cells with warnings.
-  `gRTau`, `gKTau`, `gKOmega`, and `gROmega` are omitted with a warning when
-  present. No uncertainties, `error_method`, or `blocking_diagnostics` are added,
+  Fourier sums require `reduction_gKTau = "sum"` in the observable metadata.
+  The complex blocks are summed directly, and `momenta` and `tau_edges` must
+  match the saved axes. Fourier-only runs are supported. Legacy `gKTau` means
+  and the `gRTau`, `gKOmega`, and `gROmega` fields are omitted with a warning
+  when present. No uncertainties, `error_method`, or `blocking_diagnostics` are added,
   even with `blocking_diagnostics=true`. Counterflow-only JLD2 output contains
   the `aggregate` table without top-level repeated-blocking metadata.
 - `Energy` contains `diagonalEnergy`, `kineticEnergy`, and `totalEnergy`, and
